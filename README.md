@@ -191,8 +191,10 @@ Sources/
   Ported/                    取自 grok-build-ios 的文件（见 NOTICE）
 Tests/DSBCoreTests.swift     地址解析、容错解码、消息行身份
 patches/room-log.patch       给宿主加的 room-log 端点（含 9 个单测）
+scripts/publish.py           一条命令：建仓 → 推 main → fork 上游 → 推分支 → 开 PR
 docs/PROTOCOL.md             用到的端点与载荷
 docs/UPSTREAM.md             与上游的关系、补丁内容、怎么开 PR
+docs/PUBLISH.md              建 PAT 的步骤、脚本会做什么、用完怎么撤
 ```
 
 ## CI
