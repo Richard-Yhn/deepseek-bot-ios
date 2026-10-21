@@ -32,6 +32,19 @@ struct HostAddress: Equatable, Codable {
         return url.host ?? origin
     }
 
+    /// People paste the token in whatever shape the host printed it. `?token=abc`,
+    /// `token=abc` and `abc` all mean the same thing here.
+    static func normalizeToken(_ raw: String) -> String? {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("?") || text.hasPrefix("&") { text.removeFirst() }
+        if let range = text.range(of: "token=", options: .backwards) {
+            text = String(text[range.upperBound...])
+        }
+        if let amp = text.firstIndex(of: "&") { text = String(text[..<amp]) }
+        text = text.trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
+        return text.isEmpty ? nil : text
+    }
+
     /// Accepts what people actually paste: a full login URL, a bare `ip:port`,
     /// or `ip` (port assumed to be DSH Web's default). A separate token field wins
     /// over one already inside the pasted URL.
@@ -46,10 +59,10 @@ struct HostAddress: Equatable, Codable {
 
         if components.port == nil { components.port = defaultPort }
 
-        var token = extraToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        var token = normalizeToken(extraToken)
         if let fromURL = components.queryItems?.first(where: { $0.name == "token" || $0.name == "t" })?.value,
-           !fromURL.isEmpty {
-            token = fromURL
+           let cleaned = normalizeToken(fromURL) {
+            token = cleaned
         }
 
         components.query = nil
@@ -59,6 +72,6 @@ struct HostAddress: Equatable, Codable {
         components.password = nil
         guard let origin = components.string else { return nil }
 
-        return HostAddress(origin: origin, token: token.isEmpty ? nil : token)
+        return HostAddress(origin: origin, token: token)
     }
 }

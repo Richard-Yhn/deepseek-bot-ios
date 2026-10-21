@@ -52,7 +52,7 @@ struct OnboardingView: View {
                     .font(.title2.monospaced().weight(.semibold))
                     .foregroundStyle(model.theme.textPrimary)
             }
-            Text("一队长期活着的 Bot，跑在你自己的机器上。手机是遥控器，不是算力。")
+            Text("一队长期活着的 Bot，跑在你自己的机器上。手机既是遥控器，也是一份算力。")
                 .font(.callout.monospaced())
                 .foregroundStyle(model.theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)

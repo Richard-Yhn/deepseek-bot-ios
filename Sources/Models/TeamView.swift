@@ -69,12 +69,44 @@ struct TeamView: Decodable {
     }
 }
 
+/// `bots[].avatar` is an object — `{"shape": "whale"}`, optionally with `image` — and has
+/// been since 0.1.x. It is not a string. A plain string is still accepted, because a
+/// hand-edited state file or an older host may carry just the shape name.
+struct BotAvatar: Decodable, Equatable {
+    var shape: String?
+    var image: String?
+
+    init(shape: String? = nil, image: String? = nil) {
+        self.shape = shape
+        self.image = image
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case shape, image
+    }
+
+    init(from decoder: Decoder) throws {
+        if let single = try? decoder.singleValueContainer(), let text = try? single.decode(String.self) {
+            shape = text
+            image = nil
+            return
+        }
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
+            shape = nil
+            image = nil
+            return
+        }
+        shape = (try? container.decodeIfPresent(String.self, forKey: .shape)) ?? nil
+        image = (try? container.decodeIfPresent(String.self, forKey: .image)) ?? nil
+    }
+}
+
 struct Bot: Decodable {
     var id: String?
     var name: String?
     var role: String?
     var color: String?
-    var avatar: String?
+    var avatar: BotAvatar?
     var model: String?
     var effort: String?
     var sessionId: String?
@@ -87,6 +119,32 @@ struct Bot: Decodable {
     var workDir: String?
 
     init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, role, color, avatar, model, effort, sessionId, parts, waiting,
+             brief, instructions, workDir
+    }
+
+    /// Every field is decoded on its own. One field arriving in a shape this build does
+    /// not know costs that field, not the whole Bot — and a Bot that failed entirely
+    /// would take the whole `bots` array with it, which is how "宿主返回的内容无法解析"
+    /// replaced the team list on screen.
+    init(from decoder: Decoder) throws {
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        id = (try? container.decodeIfPresent(String.self, forKey: .id)) ?? nil
+        name = (try? container.decodeIfPresent(String.self, forKey: .name)) ?? nil
+        role = (try? container.decodeIfPresent(String.self, forKey: .role)) ?? nil
+        color = (try? container.decodeIfPresent(String.self, forKey: .color)) ?? nil
+        avatar = (try? container.decodeIfPresent(BotAvatar.self, forKey: .avatar)) ?? nil
+        model = (try? container.decodeIfPresent(String.self, forKey: .model)) ?? nil
+        effort = (try? container.decodeIfPresent(String.self, forKey: .effort)) ?? nil
+        sessionId = (try? container.decodeIfPresent(String.self, forKey: .sessionId)) ?? nil
+        parts = (try? container.decodeIfPresent([String].self, forKey: .parts)) ?? nil
+        waiting = (try? container.decodeIfPresent(Bool.self, forKey: .waiting)) ?? nil
+        brief = (try? container.decodeIfPresent(String.self, forKey: .brief)) ?? nil
+        instructions = (try? container.decodeIfPresent(String.self, forKey: .instructions)) ?? nil
+        workDir = (try? container.decodeIfPresent(String.self, forKey: .workDir)) ?? nil
+    }
 
     var uid: String { id ?? name ?? "bot" }
     var displayName: String {
@@ -115,6 +173,24 @@ struct Room: Decodable {
 
     init() {}
 
+    private enum CodingKeys: String, CodingKey {
+        case id, name, members, preview, mode, notice, admin, sessionId, parts
+    }
+
+    /// Field by field, like `Bot`: one surprising shape must not cost the room list.
+    init(from decoder: Decoder) throws {
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        id = (try? container.decodeIfPresent(String.self, forKey: .id)) ?? nil
+        name = (try? container.decodeIfPresent(String.self, forKey: .name)) ?? nil
+        members = (try? container.decodeIfPresent([String].self, forKey: .members)) ?? nil
+        preview = (try? container.decodeIfPresent(String.self, forKey: .preview)) ?? nil
+        mode = (try? container.decodeIfPresent(String.self, forKey: .mode)) ?? nil
+        notice = (try? container.decodeIfPresent(String.self, forKey: .notice)) ?? nil
+        admin = (try? container.decodeIfPresent(String.self, forKey: .admin)) ?? nil
+        sessionId = (try? container.decodeIfPresent(String.self, forKey: .sessionId)) ?? nil
+        parts = (try? container.decodeIfPresent([String].self, forKey: .parts)) ?? nil
+    }
+
     var uid: String { id ?? name ?? "room" }
     var displayName: String {
         if let name, !name.isEmpty { return name }
@@ -132,6 +208,22 @@ struct ModelEntry: Decodable, Identifiable {
     var providerName: String?
 
     init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case ref, name, label, needsKey, provider, providerName
+    }
+
+    /// Same rule as `Bot`: the model catalog is the host's to change, and one entry in
+    /// an unknown shape must not empty the picker — or the team with it.
+    init(from decoder: Decoder) throws {
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        ref = (try? container.decodeIfPresent(String.self, forKey: .ref)) ?? nil
+        name = (try? container.decodeIfPresent(String.self, forKey: .name)) ?? nil
+        label = (try? container.decodeIfPresent(String.self, forKey: .label)) ?? nil
+        needsKey = (try? container.decodeIfPresent(Bool.self, forKey: .needsKey)) ?? nil
+        provider = (try? container.decodeIfPresent(String.self, forKey: .provider)) ?? nil
+        providerName = (try? container.decodeIfPresent(String.self, forKey: .providerName)) ?? nil
+    }
 
     var id: String { ref ?? label ?? name ?? "model" }
     var title: String { label ?? name ?? ref ?? "模型" }
@@ -183,6 +275,24 @@ struct Approval: Decodable, Identifiable {
     var at: DSBTime?
 
     init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case id, sessionId, botId, roomId, tool, reason, answerable, at
+    }
+
+    /// Tolerant on purpose: an approval that fails to decode would be dropped from a
+    /// `FlexibleList` without a word, and the user would never see the question.
+    init(from decoder: Decoder) throws {
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        id = (try? container.decodeIfPresent(String.self, forKey: .id)) ?? nil
+        sessionId = (try? container.decodeIfPresent(String.self, forKey: .sessionId)) ?? nil
+        botId = (try? container.decodeIfPresent(String.self, forKey: .botId)) ?? nil
+        roomId = (try? container.decodeIfPresent(String.self, forKey: .roomId)) ?? nil
+        tool = (try? container.decodeIfPresent(String.self, forKey: .tool)) ?? nil
+        reason = (try? container.decodeIfPresent(String.self, forKey: .reason)) ?? nil
+        answerable = (try? container.decodeIfPresent(Bool.self, forKey: .answerable)) ?? nil
+        at = (try? container.decodeIfPresent(DSBTime.self, forKey: .at)) ?? nil
+    }
 
     var uid: String { id ?? "approval" }
     var title: String {
