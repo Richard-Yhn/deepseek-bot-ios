@@ -102,7 +102,8 @@ git push fork feat/room-log
 | 产物 | ✅ `DeepSeekBot-unsigned.ipa` 825 KB | 同上，页面底部 Artifacts |
 | fork 上游 | ✅ | https://github.com/Richard-Yhn/DeepSeek-Bot |
 | 推 `feat/room-log` | ✅ | https://github.com/Richard-Yhn/DeepSeek-Bot/tree/feat/room-log |
-| 对上游开 PR | ❌ API 返回 404 | 需网页点一下（见下） |
+| 对上游开 PR | ❌ 上游仅允许 collaborator 开 PR | 见下 |
+| 改走 Discussions 提提案 | ✅ 已发布 #419 | https://github.com/Fei2411/DeepSeek-Bot/discussions/419 |
 
 ### 第一次 CI 失败的原因
 

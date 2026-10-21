@@ -1,5 +1,8 @@
 # Discussion draft — Discussions → Ideas
 
+> ✅ **已发布（2026-10-22 01:22）**：<https://github.com/Fei2411/DeepSeek-Bot/discussions/419>
+> 分类 Ideas，标题与正文即下面的内容。等维护者回应。
+
 Post at:
 <https://github.com/Fei2411/DeepSeek-Bot/discussions/new?category=ideas>
 
