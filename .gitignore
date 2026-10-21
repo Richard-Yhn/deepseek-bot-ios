@@ -18,3 +18,7 @@ xcuserdata/
 # Local
 *.local.xcconfig
 .env
+
+# 推送脚本的临时文件
+.remote-head
+ci-*.txt
