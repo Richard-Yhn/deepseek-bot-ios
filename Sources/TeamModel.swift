@@ -165,7 +165,7 @@ final class TeamModel: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
         var payload: [String: Any] = ["locale": "zh-CN"]
-        if !force, let revision { payload["since"] = revision }
+        if !force, let current = revision { payload["since"] = current }
         do {
             let fresh: TeamView = try await client.call("state", payload, as: TeamView.self)
             if fresh.unchanged == true {

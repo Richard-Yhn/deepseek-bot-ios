@@ -40,27 +40,36 @@ warn = lambda text: print(f"  \033[33m!\033[0m {text}")
 fail = lambda text: print(f"  \033[31m✗\033[0m {text}")
 
 
-def request(method, path, token, payload=None, accept="application/vnd.github+json"):
+def request(method, path, token, payload=None, accept="application/vnd.github+json", tries=4):
     url = path if path.startswith("http") else API + path
     data = None if payload is None else json.dumps(payload).encode()
-    req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Authorization", f"Bearer {token}")
-    req.add_header("Accept", accept)
-    req.add_header("X-GitHub-Api-Version", "2022-11-28")
-    req.add_header("User-Agent", "deepseek-bot-ios-publisher")
-    if data is not None:
-        req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=45) as response:
-            body = response.read().decode()
-            return response.status, (json.loads(body) if body.strip() else None)
-    except urllib.error.HTTPError as error:
-        body = error.read().decode()
+    last = (-1, {"message": "no attempt"})
+    for attempt in range(tries):
+        req = urllib.request.Request(url, data=data, method=method)
+        req.add_header("Authorization", f"Bearer {token}")
+        req.add_header("Accept", accept)
+        req.add_header("X-GitHub-Api-Version", "2022-11-28")
+        req.add_header("User-Agent", "deepseek-bot-ios-publisher")
+        if data is not None:
+            req.add_header("Content-Type", "application/json")
         try:
-            parsed = json.loads(body)
-        except Exception:
-            parsed = {"message": body[:400]}
-        return error.code, parsed
+            with urllib.request.urlopen(req, timeout=45) as response:
+                body = response.read().decode()
+                return response.status, (json.loads(body) if body.strip() else None)
+        except urllib.error.HTTPError as error:
+            body = error.read().decode()
+            try:
+                parsed = json.loads(body)
+            except Exception:
+                parsed = {"message": body[:400]}
+            # 5xx 是 GitHub 自己的抖动，值得重试；4xx 是我们的问题，直接回。
+            if error.code < 500:
+                return error.code, parsed
+            last = (error.code, parsed)
+        except Exception as error:                     # SSL EOF、超时、连接重置
+            last = (-1, {"message": f"{type(error).__name__}: {error}"})
+        time.sleep(2 + attempt * 2)
+    return last
 
 
 def git(args, cwd):
@@ -167,12 +176,17 @@ def main():
 
     print(f"\n== 5/5 开 PR ==")
     if args.dry_run:
-        base = args.base or "dev（上游没有 dev 就用 main）"
+        base = args.base or "上游默认分支（dev 比 main 旧时用 main）"
     elif args.base:
         base = args.base
     else:
-        status, _ = request("GET", f"/repos/{UPSTREAM}/branches/dev", token)
-        base = "dev" if status == 200 else "main"
+        # 上游的 dev 常常落后于 main；对着落后的 dev 开 PR 会把无关提交一起带进去，
+        # 所以默认用仓库自己的默认分支，--base 可以强制指定。
+        status, repo = request("GET", f"/repos/{UPSTREAM}", token)
+        default = (repo or {}).get("default_branch", "main") if isinstance(repo, dict) else "main"
+        base = default
+        if base != "dev":
+            warn(f"base 用 {base}（上游 dev 比它旧，对着 dev 开 PR 会带上无关提交）")
     info(f"目标分支 {base}")
     if args.dry_run:
         info(f"[dry-run] POST /repos/{UPSTREAM}/pulls  head={login}:{BRANCH}  base={base}")
@@ -195,6 +209,15 @@ def main():
     if status not in (200, 201):
         message = (body or {}).get("message", "")
         errors = (body or {}).get("errors", "")
+        compare = f"https://github.com/{UPSTREAM}/compare/{base}...{login}:{BRANCH}?expand=1"
+        if status == 404:
+            # 分支已经推好了，缺的只是"对别人的仓库开 PR"这一步。GitHub 在账号受限
+            # （邮箱未验证、或该仓库限制了新贡献者）时只会回一个含糊的 404，网页才说原因。
+            warn("API 开 PR 返回 404。分支已在 fork 上，缺的是对上游开 PR 的权限。")
+            print(f"\n用网页点一下就能开（页面会显示真正的原因）：\n  {compare}\n")
+            print("如果网页也拒绝：先确认 github.com/settings/emails 里的邮箱已验证，")
+            print("再看上游仓库的 issue/PR 是否限制了新贡献者；处理完重跑本脚本即可。")
+            raise SystemExit(2)
         raise SystemExit(f"开 PR 失败（HTTP {status}）：{message} {errors}")
     ok(f"PR 已开：{body['html_url']}")
 

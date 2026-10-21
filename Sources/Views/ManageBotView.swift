@@ -233,7 +233,7 @@ struct ManageBotView: View {
             sectionTitle("工作目录")
             Picker("工作目录", selection: $draft.workDir) {
                 Text("不指定").tag("")
-                ForEach(folders, id: \.uid) { folder in
+                ForEach(folders, id: \.id) { folder in
                     Text(folder.name).tag(folder.path ?? "")
                 }
             }

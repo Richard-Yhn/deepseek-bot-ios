@@ -65,6 +65,13 @@ node --test  ds-bot/test/room-log.test.js
 installed — I could not fetch those packages where this was written, so treat that as
 the first thing to check in CI.
 
+## Base branch
+
+Opened against `main`. At the time of writing `dev` is behind `main`, so pointing this
+at `dev` would pull those unrelated commits into the diff; the patch itself is one
+commit, `ae63b45` plus a single change. Retarget to `dev` if that is still preferred —
+the diff is the same three files either way.
+
 ## Context
 
 Written for an iOS client that talks to `POST /api/bot` (SwiftUI, no DSH inside), so

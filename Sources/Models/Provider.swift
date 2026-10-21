@@ -129,7 +129,7 @@ struct FolderOption: Decodable, Identifiable {
 
     init() {}
 
-    var uid: String { path ?? title ?? "folder" }
+    var id: String { path ?? title ?? "folder" }
     var name: String {
         if let title, !title.isEmpty { return title }
         guard let path else { return "文件夹" }
