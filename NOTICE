@@ -1,0 +1,60 @@
+DeepSeek Bot for iOS
+Copyright (c) 2026 Richard-Yhn
+
+This product includes software developed by third parties, used under the
+Apache License, Version 2.0 (see LICENSE).
+
+--------------------------------------------------------------------------
+1. DeepSeek-Bot — https://github.com/Fei2411/DeepSeek-Bot
+   Copyright (c) 2026 Fei2411
+   Licensed under the Apache License, Version 2.0.
+
+   This app is a client for it. Taken from that project:
+
+     · the client channel `POST /api/bot` with the `{endpoint, payload}` /
+       `{ok, value}` envelope            (ds-bot/src/client/api.js,
+                                          ds-bot/src/host/channel.js)
+     · the endpoint names and payloads   (ds-bot/src/host/channel.js)
+     · the team view shape               (channel.js — view() and live())
+     · the chat item kinds               (ds-bot/src/host/parts.js — displayItems)
+     · the approval shape and the
+       `allow` / `reject` choices        (ds-bot/src/host/approvals.js)
+     · the login-URL token → signed
+       cookie handshake                  (app/src/main.mjs, docker/README.md)
+
+   No source file from DeepSeek-Bot is copied into this repository.
+
+--------------------------------------------------------------------------
+2. grok-build-ios — https://github.com/Pedroshakoor/grok-build-ios
+   Copyright (c) 2026 Pedro Shakour
+   Licensed under the Apache License, Version 2.0.
+
+   The iOS client skeleton comes from it:
+
+     · Sources/Ported/MarkdownLite.swift      copied, unchanged
+     · Sources/Ported/PromptBar.swift         adapted (placeholder, enablement,
+                                              model line, send affordance)
+     · Sources/Ported/PermissionBanner.swift  adapted (DS Bot approvals instead of
+                                              ACP session/request_permission)
+     · Sources/Ported/DSBTheme.swift          adapted from Theme.swift; the token
+                                              names are Grok's, the palette and the
+                                              JSON theme loading are not
+     · Sources/Models/Chrome.swift            AppScreen / ConnectionPhase /
+                                              PermissionOption vocabulary from
+                                              Models/ScrollbackEntry.swift
+     · Sources/TeamModel.swift                the observable surface (screen,
+                                              messages, draft, connectionPhase,
+                                              permissionRequest, theme) follows
+                                              AppModel.swift
+
+   No ACP, WebSocket, companion bridge or Grok theme JSON is included: that half of
+   the project is replaced by DeepSeek Bot's HTTP channel.
+
+--------------------------------------------------------------------------
+3. DeepSeek Harness (dsh) — https://github.com/deepseek-ai/dsh
+
+   The host this client talks to. Not bundled, not vendored. The app is inert until
+   you point it at a `dsh` host you run yourself.
+
+--------------------------------------------------------------------------
+See LICENSE for the full Apache License, Version 2.0.

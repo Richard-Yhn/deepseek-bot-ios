@@ -1,0 +1,82 @@
+name: ios
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (unsigned IPA)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          echo "iphoneos SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+          swift --version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Unit tests (simulator)
+        run: |
+          set -euo pipefail
+          UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next((x['udid'] for r in d for x in d[r] if x['name'].startswith('iPhone')), ''))")
+          if [ -z "$UDID" ]; then
+            echo "No iPhone simulator on this runner - skipping unit tests."
+            exit 0
+          fi
+          echo "Simulator: $UDID"
+          xcodebuild test -project DeepSeekBot.xcodeproj -scheme DeepSeekBot -destination "id=$UDID" CODE_SIGNING_ALLOWED=NO -quiet
+
+      - name: Build device app (no signing)
+        run: |
+          xcodebuild build -project DeepSeekBot.xcodeproj -scheme DeepSeekBot -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -quiet
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          APP="build/Build/Products/Release-iphoneos/DeepSeekBot.app"
+          test -d "$APP"
+          rm -rf out
+          mkdir -p out/Payload
+          cp -R "$APP" out/Payload/
+          cd out
+          zip -qry "DeepSeekBot-unsigned.ipa" Payload
+          rm -rf Payload
+          ls -lh DeepSeekBot-unsigned.ipa
+          shasum -a 256 DeepSeekBot-unsigned.ipa | tee DeepSeekBot-unsigned.ipa.sha256
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeepSeekBot-unsigned-ipa
+          path: |
+            out/DeepSeekBot-unsigned.ipa
+            out/DeepSeekBot-unsigned.ipa.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach IPA to the release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/DeepSeekBot-unsigned.ipa
+            out/DeepSeekBot-unsigned.ipa.sha256

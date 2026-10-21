@@ -1,0 +1,20 @@
+# Xcode project is generated from project.yml by XcodeGen
+DeepSeekBot.xcodeproj/
+Support/Info.plist
+
+# Build products
+build/
+out/
+DerivedData/
+*.ipa
+*.dSYM.zip
+
+# macOS / Xcode noise
+.DS_Store
+xcuserdata/
+*.xcuserstate
+*.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+
+# Local
+*.local.xcconfig
+.env
