@@ -66,7 +66,17 @@ jobs:
             exit 0
           fi
           echo "Simulator: $UDID"
-          xcodebuild test -project DeepSeekBot.xcodeproj -scheme DeepSeekBot -destination "id=$UDID" CODE_SIGNING_ALLOWED=NO -quiet
+          set +e
+          xcodebuild test -project DeepSeekBot.xcodeproj -scheme DeepSeekBot -destination "id=$UDID" CODE_SIGNING_ALLOWED=NO > test.log 2>&1
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "::group::测试失败摘要"
+            grep -E "error:|XCTAssert|Test Case .* failed|Testing failed|TEST FAILED|Failed to build" test.log | head -80 || true
+            echo "::endgroup::"
+            exit "$status"
+          fi
+          tail -4 test.log
 
       # build 号 = 运行序号，所以同一个 MARKETING_VERSION 下的包也能分辨先后。
       - name: Build device app (no signing)

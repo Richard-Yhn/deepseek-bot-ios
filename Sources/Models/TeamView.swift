@@ -135,7 +135,10 @@ struct Bot: Decodable {
         name = (try? container.decodeIfPresent(String.self, forKey: .name)) ?? nil
         role = (try? container.decodeIfPresent(String.self, forKey: .role)) ?? nil
         color = (try? container.decodeIfPresent(String.self, forKey: .color)) ?? nil
-        avatar = (try? container.decodeIfPresent(BotAvatar.self, forKey: .avatar)) ?? nil
+        // An avatar in a shape this build cannot read (a number, an array) decodes to an
+        // empty BotAvatar; that is "no avatar", not "an avatar with nothing in it".
+        let avatarValue = (try? container.decodeIfPresent(BotAvatar.self, forKey: .avatar)) ?? nil
+        avatar = (avatarValue?.shape == nil && avatarValue?.image == nil) ? nil : avatarValue
         model = (try? container.decodeIfPresent(String.self, forKey: .model)) ?? nil
         effort = (try? container.decodeIfPresent(String.self, forKey: .effort)) ?? nil
         sessionId = (try? container.decodeIfPresent(String.self, forKey: .sessionId)) ?? nil
