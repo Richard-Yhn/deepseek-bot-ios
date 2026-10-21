@@ -27,6 +27,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 版本只有一处来源：project.yml 的 MARKETING_VERSION。
+      # 发版时 tag 必须与它一致（v0.2.0 ↔ 0.2.0），否则在这里停下，
+      # 免得 Release 上挂着一个和 App 内部版本对不上的包。
+      - name: Resolve version
+        run: |
+          set -euo pipefail
+          VERSION=$(grep -E '^[[:space:]]+MARKETING_VERSION:' project.yml | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          if [ -z "$VERSION" ]; then
+            echo "::error::project.yml 里找不到 MARKETING_VERSION"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "版本: $VERSION"
+          if [ "${GITHUB_EVENT_NAME}" = "release" ] && [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} 与 project.yml 的 MARKETING_VERSION ${VERSION} 不一致"
+            exit 1
+          fi
+
       - name: Toolchain
         run: |
           xcodebuild -version
@@ -50,9 +68,10 @@ jobs:
           echo "Simulator: $UDID"
           xcodebuild test -project DeepSeekBot.xcodeproj -scheme DeepSeekBot -destination "id=$UDID" CODE_SIGNING_ALLOWED=NO -quiet
 
+      # build 号 = 运行序号，所以同一个 MARKETING_VERSION 下的包也能分辨先后。
       - name: Build device app (no signing)
         run: |
-          xcodebuild build -project DeepSeekBot.xcodeproj -scheme DeepSeekBot -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -quiet
+          xcodebuild build -project DeepSeekBot.xcodeproj -scheme DeepSeekBot -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" CURRENT_PROJECT_VERSION="${{ github.run_number }}" -quiet
 
       - name: Package unsigned IPA
         run: |
@@ -63,18 +82,19 @@ jobs:
           mkdir -p out/Payload
           cp -R "$APP" out/Payload/
           cd out
-          zip -qry "DeepSeekBot-unsigned.ipa" Payload
+          NAME="DeepSeekBot-${VERSION}-unsigned.ipa"
+          zip -qry "$NAME" Payload
           rm -rf Payload
-          ls -lh DeepSeekBot-unsigned.ipa
-          shasum -a 256 DeepSeekBot-unsigned.ipa | tee DeepSeekBot-unsigned.ipa.sha256
+          shasum -a 256 "$NAME" | tee "${NAME}.sha256"
+          ls -lh "$NAME" "${NAME}.sha256"
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: DeepSeekBot-unsigned-ipa
+          name: DeepSeekBot-${{ env.VERSION }}-unsigned-ipa
           path: |
-            out/DeepSeekBot-unsigned.ipa
-            out/DeepSeekBot-unsigned.ipa.sha256
+            out/*.ipa
+            out/*.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -83,5 +103,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            out/DeepSeekBot-unsigned.ipa
-            out/DeepSeekBot-unsigned.ipa.sha256
+            out/*.ipa
+            out/*.sha256

@@ -148,3 +148,25 @@ https://github.com/Fei2411/DeepSeek-Bot/discussions/new?category=ideas
 `compare` 显示：对 `dev` 是 **ahead 8**，对 `main` 是 **ahead 1**。也就是说上游 `dev`
 比 `main` 旧 7 个提交，对着 `dev` 开 PR 会把这 7 个无关提交一起带进 diff。
 所以 PR 指向 `main`，正文里也写明了这一点，维护者想改回 `dev` 一键 retarget 即可。
+
+---
+
+## 发版流程（版本号从哪来）
+
+**单一来源**：`project.yml` 里的 `MARKETING_VERSION`。
+
+1. 改 `project.yml` 的 `MARKETING_VERSION`（例如 `0.2.1`）
+2. commit & push
+3. 打 tag 并推：`git tag v0.2.1 && git push origin v0.2.1`
+4. 在 GitHub 上用这个 tag 建 Release（页面或 API 都行）
+5. workflow 做四件事：
+   - **校验** `tag == v<MARKETING_VERSION>`，不等就直接失败（避免 Release 上的包和 App 内部版本对不上）
+   - 编译，`CURRENT_PROJECT_VERSION` = workflow 运行序号（同一版本的多次构建也能分辨）
+   - 产出 `DeepSeekBot-<版本>-unsigned.ipa` + 同名 `.sha256`
+   - 自动挂到 Release 上
+
+App 内「设置 → 版本」读的是 Info.plist，与 tag 同源，所以永远一致。
+
+**注意**：iOS 构建不是逐字节可复现（带时间戳）。同一个 commit 重编两次，sha256 会不同——
+所以 Release 正文里不要手写哈希，指向 `.sha256` 资产即可。v0.2.0 就踩过这个坑：
+手工传的包被 CI 重编的覆盖了，正文里那个哈希当场失效。

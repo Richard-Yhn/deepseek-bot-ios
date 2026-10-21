@@ -6,8 +6,11 @@
 
 **手机既是遥控器，也是一份算力。** 它盯着桌面端的团队实时同步、能管理团队；也能绕开宿主，直接接任意 OpenAI 兼容接口自己算。
 
-> 构建状态：CI 已跑通（2026-10-22）。产物 `DeepSeekBot-unsigned.ipa` 825 KB，
-> `io.github.richard-yhn.deepseekbot` 0.2.0 (1)，iOS 17.0+，arm64 未签名。
+> **下载**：[Releases → v0.2.0](https://github.com/Richard-Yhn/deepseek-bot-ios/releases/tag/v0.2.0)
+> · `DeepSeekBot-0.2.0-unsigned.ipa`（825 KB，未签名，需自签）
+>
+> 版本号只有一处来源：`project.yml` 的 `MARKETING_VERSION`。发版时 tag 必须与它一致，
+> CI 会校验并拒绝不一致的 tag。详见 [docs/PUBLISH.md](docs/PUBLISH.md#发版流程版本号从哪来)。
 
 ---
 
