@@ -90,7 +90,7 @@ final class DSBClient {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let body: [String: Any] = [
             "endpoint": endpoint,
-            "payload": payload.isEmpty ? NSNull() : payload,
+            "payload": payload.isEmpty ? (NSNull() as Any) : (payload as Any),
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 

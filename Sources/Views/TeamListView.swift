@@ -3,15 +3,21 @@
 // Bot holding a turn, a hollow one for an idle Bot, the age on the right. Rows that
 // need a person (approvals) sit above the roster, because a phone is mostly opened
 // to unblock something.
+//
+// Every row shows the model that Bot runs on, because a team of Bots on one model is a
+// team of one voice: the point of per-Bot model refs is that they differ.
 
 import SwiftUI
 
 struct TeamListView: View {
     @EnvironmentObject private var model: TeamModel
 
+    @State private var manage: ManageTarget?
+
     private var theme: DSBTheme { model.theme }
     private var approvals: [Approval] { model.team.approvalList }
     private var bots: [Bot] { model.team.botList }
+    private var working: Int { bots.filter { model.team.isWorking($0) }.count }
 
     var body: some View {
         ScrollView {
@@ -30,7 +36,7 @@ struct TeamListView: View {
                         .padding(.bottom, 8)
                     }
                 }
-                sectionTitle("Bot · \(bots.count)")
+                sectionTitle("Bot · \(bots.count)" + (working > 0 ? " · \(working) 个在跑" : ""))
                 if bots.isEmpty {
                     empty
                 } else {
@@ -45,8 +51,13 @@ struct TeamListView: View {
                 footer
             }
         }
-        .refreshable { await model.refresh() }
+        .refreshable { await model.refresh(force: true) }
+        .safeAreaInset(edge: .bottom) { actionBar }
         .background(theme.bgBase)
+        .sheet(item: $manage) { target in
+            ManageBotView(bot: target.bot)
+                .environmentObject(model)
+        }
     }
 
     private var header: some View {
@@ -56,9 +67,19 @@ struct TeamListView: View {
                     .font(.title3.monospaced().weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
                 Spacer()
-                navButton("群聊", symbol: "bubble.left.and.bubble.right") { model.screen = .rooms }
-                navButton("完整界面", symbol: "safari") { model.screen = .web }
-                navButton("设置", symbol: "gearshape") { model.screen = .settings }
+                Button {
+                    manage = ManageTarget(bot: nil)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus").font(.caption2.weight(.bold))
+                        Text("新建").font(.caption2.monospaced())
+                    }
+                    .foregroundStyle(theme.bgTerminal)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(theme.accentAssistant)
+                }
+                .buttonStyle(.plain)
             }
             HStack(spacing: 6) {
                 Circle()
@@ -123,64 +144,85 @@ struct TeamListView: View {
     }
 
     private func row(_ bot: Bot) -> some View {
-        Button {
-            Task { await model.openBot(bot) }
-        } label: {
-            HStack(alignment: .top, spacing: 10) {
-                Text(model.team.isWorking(bot) ? "◆" : "◇")
-                    .font(.body.monospaced())
-                    .foregroundStyle(model.team.isWorking(bot) ? theme.accentAssistant : theme.gray)
-                    .frame(width: 22, alignment: .leading)
+        HStack(alignment: .top, spacing: 10) {
+            Button {
+                Task { await model.openBot(bot) }
+            } label: {
+                HStack(alignment: .top, spacing: 10) {
+                    Text(model.team.isWorking(bot) ? "◆" : "◇")
+                        .font(.body.monospaced())
+                        .foregroundStyle(model.team.isWorking(bot) ? theme.accentAssistant : theme.gray)
+                        .frame(width: 22, alignment: .leading)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(bot.displayName)
-                            .font(.body.monospaced().weight(.medium))
-                            .foregroundStyle(theme.textPrimary)
-                        if model.team.isMain(bot) {
-                            Text("主")
-                                .font(.caption2.monospaced())
-                                .foregroundStyle(theme.bgTerminal)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(theme.accentAssistant)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(bot.displayName)
+                                .font(.body.monospaced().weight(.medium))
+                                .foregroundStyle(theme.textPrimary)
+                            if model.team.isMain(bot) {
+                                Text("主")
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(theme.bgTerminal)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .background(theme.accentAssistant)
+                            }
+                            if bot.waiting == true {
+                                Text("等选模型")
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(theme.accentPlan)
+                            }
                         }
-                        if bot.waiting == true {
-                            Text("等选模型")
-                                .font(.caption2.monospaced())
-                                .foregroundStyle(theme.accentPlan)
-                        }
-                    }
-                    if !bot.subtitle.isEmpty {
-                        Text(bot.subtitle)
+                        Text(modelLine(bot))
                             .font(.caption2.monospaced())
-                            .foregroundStyle(theme.textSecondary)
+                            .foregroundStyle(
+                                model.team.isCustomModel(bot.model) ? theme.accentSuccess : theme.textSecondary
+                            )
+                            .lineLimit(1)
+                        Text(botStatus(bot))
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(theme.gray)
                             .lineLimit(1)
                     }
-                    Text(botStatus(bot))
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(theme.gray)
-                        .lineLimit(1)
+                    Spacer(minLength: 4)
                 }
-
-                Spacer(minLength: 4)
-
-                if let color = bot.color, color.hasPrefix("#") {
-                    Circle()
-                        .fill(Color(hex: color))
-                        .frame(width: 8, height: 8)
-                        .padding(.top, 6)
-                }
-                Image(systemName: "chevron.right")
-                    .font(.caption2)
-                    .foregroundStyle(theme.grayDim)
-                    .padding(.top, 3)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+
+            Button {
+                manage = ManageTarget(bot: bot)
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.caption2)
+                    .foregroundStyle(theme.gray)
+                    .padding(6)
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+    }
+
+    /// `provider/model` → the model name, with the role beside it.
+    private func modelLine(_ bot: Bot) -> String {
+        var short = "默认模型"
+        if let ref = bot.model, !ref.isEmpty {
+            if let slash = ref.firstIndex(of: "/") {
+                short = String(ref[ref.index(after: slash)...])
+            } else {
+                short = ref
+            }
+        }
+        let task: String
+        if let role = bot.role, !role.isEmpty {
+            task = role
+        } else if let brief = bot.brief, !brief.isEmpty {
+            task = brief
+        } else {
+            task = ""
+        }
+        return task.isEmpty ? short : "\(short) · \(task)"
     }
 
     private func botStatus(_ bot: Bot) -> String {
@@ -203,7 +245,7 @@ struct TeamListView: View {
             Text("这支团队里还没有 Bot。")
                 .font(.callout.monospaced())
                 .foregroundStyle(theme.textSecondary)
-            Text("先电脑上创建，或者点右上角「完整界面」。")
+            Text("点右上角「新建」，给它起名字、选模型、写任务。")
                 .font(.caption.monospaced())
                 .foregroundStyle(theme.gray)
         }
@@ -211,27 +253,42 @@ struct TeamListView: View {
     }
 
     private var footer: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("每 3 秒核对一次团队状态 · 下拉可立即刷新")
-                .font(.caption2.monospaced())
-                .foregroundStyle(theme.grayDim)
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 18)
-        .padding(.bottom, 28)
+        Text("干活时每 1–4 秒增量核对一次团队 · 下拉可立即全量刷新")
+            .font(.caption2.monospaced())
+            .foregroundStyle(theme.grayDim)
+            .padding(.horizontal, 12)
+            .padding(.top, 18)
+            .padding(.bottom, 12)
     }
 
-    private func navButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
+    private var actionBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                chip("派活", symbol: "paperplane") { model.screen = .dispatch }
+                chip("群聊", symbol: "bubble.left.and.bubble.right") { model.screen = .rooms }
+                chip("供应商", symbol: "server.rack") { model.screen = .providers }
+                chip("直连模型", symbol: "cpu") { model.screen = .direct }
+                chip("完整界面", symbol: "safari") { model.screen = .web }
+                chip("设置", symbol: "gearshape") { model.screen = .settings }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+        .background(theme.bgTerminal)
+        .overlay(alignment: .top) {
+            Rectangle().fill(theme.promptBorder).frame(height: 1)
+        }
+    }
+
+    private func chip(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                Image(systemName: symbol)
-                    .font(.caption2)
-                Text(title)
-                    .font(.caption2.monospaced())
+                Image(systemName: symbol).font(.caption2)
+                Text(title).font(.caption2.monospaced())
             }
             .foregroundStyle(theme.textSecondary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
             .overlay(Rectangle().stroke(theme.promptBorder, lineWidth: 1))
         }
         .buttonStyle(.plain)

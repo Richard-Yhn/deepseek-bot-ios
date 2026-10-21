@@ -40,6 +40,28 @@ struct TeamView: Decodable {
         return (mainBotIds ?? []).contains(id)
     }
 
+    /// Catalog grouped by provider, ordered the way the host lists providers.
+    var modelGroups: [ModelGroup] {
+        var order: [String] = []
+        var byProvider: [String: [ModelEntry]] = [:]
+        for entry in modelList {
+            let key = entry.providerTitle
+            if byProvider[key] == nil { order.append(key) }
+            byProvider[key, default: []].append(entry)
+        }
+        return order.map { ModelGroup(id: $0, title: $0, models: byProvider[$0] ?? []) }
+    }
+
+    /// True when a model ref comes from a provider the user added (`provider-add`).
+    func isCustomModel(_ ref: String?) -> Bool {
+        guard let ref else { return false }
+        guard let entry = modelList.first(where: { $0.ref == ref }) else { return false }
+        guard let providerName = entry.providerName, !providerName.isEmpty else { return false }
+        // The host ships DeepSeek's own providers; anything else here was added.
+        let builtin = ["deepseek", "DeepSeek", "deepseek-ai"]
+        return !builtin.contains(providerName) && !builtin.contains(entry.provider ?? "")
+    }
+
     /// Which Bots hold a turn right now (`work.bots`, per Bot in the host's view).
     func isWorking(_ bot: Bot) -> Bool {
         guard let id = bot.id, let working = work?.bots else { return false }
@@ -60,6 +82,8 @@ struct Bot: Decodable {
     /// The Bot holds its greeting until the user picks its model.
     var waiting: Bool?
     var brief: String?
+    /// The standing order, kept by the host on every Bot (roster.js — buildBot).
+    var instructions: String?
     var workDir: String?
 
     init() {}
@@ -104,11 +128,27 @@ struct ModelEntry: Decodable, Identifiable {
     var name: String?
     var label: String?
     var needsKey: Bool?
+    var provider: String?
+    var providerName: String?
 
     init() {}
 
     var id: String { ref ?? label ?? name ?? "model" }
     var title: String { label ?? name ?? ref ?? "模型" }
+    /// `provider/model` → `model`, which is what a person calls it.
+    var shortName: String {
+        guard let ref, let slash = ref.firstIndex(of: "/") else { return title }
+        return String(ref[ref.index(after: slash)...])
+    }
+    var providerTitle: String { providerName ?? provider ?? "默认" }
+}
+
+/// The catalog grouped by provider — a Bot's model is picked per provider, and that is
+/// also how a custom endpoint shows up: as one more group.
+struct ModelGroup: Identifiable {
+    let id: String
+    let title: String
+    let models: [ModelEntry]
 }
 
 struct Prefs: Decodable {

@@ -28,6 +28,10 @@ final class TeamModel: ObservableObject {
     @Published var team = TeamView()
     @Published var lastRefresh: Date?
     @Published var isRefreshing = false
+    @Published var isBusy = false
+    @Published var providers = ProviderDirectory()
+    /// The team's revision, sent back as `since` so an unchanged answer stays cheap.
+    private(set) var revision: Int?
 
     // The open Bot
     @Published var selectedBotId: String?
@@ -132,27 +136,43 @@ final class TeamModel: ObservableObject {
         pollTask?.cancel()
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
-                guard let self, !Task.isCancelled else { return }
+                guard let self else { return }
+                try? await Task.sleep(nanoseconds: self.pollInterval)
+                guard !Task.isCancelled else { return }
                 await self.refresh()
                 if self.screen == .chat { await self.loadChat(silent: true) }
             }
         }
     }
 
-    func refresh() async {
+    /// Fast while someone is working or a conversation is open, slow when the team is
+    /// idle. `since` keeps the idle ticks cheap: an unchanged answer is a few hundred
+    /// bytes of `live()` state.
+    private var pollInterval: UInt64 {
+        if screen == .chat { return 1_200_000_000 }
+        if team.botList.contains(where: { team.isWorking($0) }) { return 1_500_000_000 }
+        return 4_000_000_000
+    }
+
+    /// `force` drops `since` and asks for the whole team — used after every mutation,
+    /// because a changed field does not always bump the revision the client last saw.
+    func refresh(force: Bool = false) async {
         guard client.isConnected, !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
+        var payload: [String: Any] = ["locale": "zh-CN"]
+        if !force, let revision { payload["since"] = revision }
         do {
-            let fresh: TeamView = try await client.call("state", ["locale": "zh-CN"], as: TeamView.self)
+            let fresh: TeamView = try await client.call("state", payload, as: TeamView.self)
             if fresh.unchanged == true {
                 // Only the `live()` half is new; the team itself is untouched.
                 team.work = fresh.work
                 team.questions = fresh.questions
                 team.views = fresh.views
+                if let value = fresh.revision { revision = value }
             } else {
                 team = fresh
+                revision = fresh.revision
             }
             lastRefresh = Date()
             if connectionPhase != .succeeded { connectionPhase = .succeeded }
@@ -245,6 +265,271 @@ final class TeamModel: ObservableObject {
             await refresh()
         } catch {
             notice = error.localizedDescription
+        }
+    }
+
+    // MARK: - Managing the team
+    //
+    // Every Bot is its own root Session on the host, which is what makes "many Bots at
+    // once" work: dispatching to five Bots is five `send` calls, and the host runs the
+    // five turns in parallel. Each Bot carries its own model ref, so one can run on the
+    // DeepSeek default while another runs on a custom provider added with `provider-add`.
+
+    func createBot(_ draft: BotDraft) async -> Bool {
+        guard draft.canSubmit else {
+            notice = "先给这个 Bot 起个名字。"
+            return false
+        }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            try await client.callVoid("create-bot", draft.createPayload())
+            await refresh(force: true)
+            await loadProviders()
+            return true
+        } catch {
+            notice = error.localizedDescription
+            return false
+        }
+    }
+
+    func updateBot(_ draft: BotDraft) async -> Bool {
+        guard let id = draft.editingId, draft.canSubmit else { return false }
+        isBusy = true
+        defer { isBusy = false }
+        var payload = draft.updatePayload()
+        payload["id"] = id
+        do {
+            try await client.callVoid("update-bot", payload)
+            await refresh(force: true)
+            return true
+        } catch {
+            notice = error.localizedDescription
+            return false
+        }
+    }
+
+    func deleteBot(_ bot: Bot) async -> Bool {
+        guard let id = bot.id else { return false }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            try await client.callVoid("delete-bot", ["id": id])
+            if selectedBotId == id {
+                selectedBotId = nil
+                botMessages = []
+                screen = .team
+            }
+            await refresh(force: true)
+            return true
+        } catch {
+            notice = error.localizedDescription
+            return false
+        }
+    }
+
+    func setMain(_ bot: Bot, primary: Bool = false) async -> Bool {
+        guard let id = bot.id else { return false }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            try await client.callVoid("set-main", ["id": id, "main": true, "primary": primary])
+            await refresh(force: true)
+            return true
+        } catch {
+            notice = error.localizedDescription
+            return false
+        }
+    }
+
+    func createRoom(name: String, members: [String], admin: String?, greet: Bool) async -> Bool {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty, members.count >= 2 else {
+            notice = "群聊要有名字，至少两个成员。"
+            return false
+        }
+        isBusy = true
+        defer { isBusy = false }
+        var payload: [String: Any] = ["name": clean, "members": members, "greet": greet]
+        if let admin, !admin.isEmpty { payload["admin"] = admin }
+        do {
+            try await client.callVoid("create-room", payload)
+            await refresh(force: true)
+            return true
+        } catch {
+            notice = error.localizedDescription
+            return false
+        }
+    }
+
+    func deleteRoom(_ room: Room) async -> Bool {
+        guard let id = room.id else { return false }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            try await client.callVoid("delete-room", ["id": id])
+            await refresh(force: true)
+            return true
+        } catch {
+            notice = error.localizedDescription
+            return false
+        }
+    }
+
+    // MARK: - Handing work out
+
+    /// Sends one job to several Bots at once, with a per-Bot angle. The host queues each
+    /// turn on that Bot's own Session, so they really do run in parallel.
+    func dispatch(_ task: String, targets: [DispatchTarget]) async -> String {
+        let body = task.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return "先写一句要做什么。" }
+        let chosen = targets.filter { $0.selected }
+        guard !chosen.isEmpty else { return "没有勾选 Bot。" }
+        var sent = 0
+        var skipped: [String] = []
+        var failed: [String] = []
+        for target in chosen {
+            guard let sessionId = target.bot.sessionId else {
+                skipped.append(target.bot.displayName)
+                continue
+            }
+            let note = target.note.trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = note.isEmpty ? body : "\(body)\n\n你负责的这一份：\(note)"
+            do {
+                try await client.callVoid("send", ["sessionId": sessionId, "text": text])
+                sent += 1
+            } catch {
+                failed.append("\(target.bot.displayName)（\(error.localizedDescription)）")
+            }
+        }
+        await refresh(force: true)
+        if !failed.isEmpty {
+            return "发出 \(sent) 个，失败 \(failed.count) 个：\(failed.joined(separator: "；"))"
+        }
+        if !skipped.isEmpty {
+            return "发出 \(sent) 个；\(skipped.joined(separator: "、")) 还没有会话，先在完整界面打开一次。"
+        }
+        return "已派给 \(sent) 个 Bot，它们各自在宿主上并行跑。"
+    }
+
+    // MARK: - Models, providers, folders
+
+    /// A model's thinking levels. Asked per model ref, because they belong to the model.
+    func loadEfforts(for ref: String) async -> EffortCatalog {
+        guard !ref.isEmpty else { return EffortCatalog() }
+        do {
+            return try await client.call("efforts", ["ref": ref], as: EffortCatalog.self)
+        } catch {
+            return EffortCatalog()
+        }
+    }
+
+    /// The folders the team already works in, for a Bot's workDir.
+    func loadFolders() async -> FolderCatalog {
+        do {
+            return try await client.call("folders", [:], as: FolderCatalog.self)
+        } catch {
+            return FolderCatalog()
+        }
+    }
+
+    func loadProviders() async {
+        guard client.isConnected else { return }
+        do {
+            providers = try await client.call("providers", [:], as: ProviderDirectory.self)
+        } catch {
+            // `providers` is unanswerable on a host without DSH's settings seams; that is
+            // a state, not a failure worth a banner.
+            providers = ProviderDirectory()
+        }
+    }
+
+    func setProviderKey(_ provider: Provider, value: String?) async -> Bool {
+        guard let id = provider.id else { return false }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            var payload: [String: Any] = ["provider": id]
+            if let value { payload["value"] = value } else { payload["value"] = NSNull() }
+            try await client.callVoid("provider-key", payload)
+            await loadProviders()
+            await refresh(force: true)
+            return true
+        } catch {
+            notice = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Adds a provider DSH ships nothing about: an endpoint you run, or a vendor it does
+    /// not know. This is what "a Bot on a custom model" starts with.
+    func addCustomProvider(
+        id: String,
+        name: String,
+        baseURL: String,
+        api: String,
+        key: String,
+        modelIds: [String]
+    ) async -> Bool {
+        let route = id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let endpoint = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ids = modelIds
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !route.isEmpty, !endpoint.isEmpty, !ids.isEmpty else {
+            notice = "供应商 id、接口地址、至少一个模型 id 都要填。"
+            return false
+        }
+        isBusy = true
+        defer { isBusy = false }
+        var payload: [String: Any] = [
+            "provider": route,
+            "custom": true,
+            "api": api,
+            "baseURL": endpoint,
+            "models": ids.map { ["id": $0] },
+        ]
+        let displayName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !displayName.isEmpty { payload["name"] = displayName }
+        let secret = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !secret.isEmpty { payload["key"] = secret }
+        do {
+            providers = try await client.call("provider-add", payload, as: ProviderDirectory.self)
+            await refresh(force: true)
+            return true
+        } catch {
+            notice = error.localizedDescription
+            return false
+        }
+    }
+
+    func removeProvider(_ provider: Provider) async -> Bool {
+        guard let id = provider.id else { return false }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            providers = try await client.call("provider-remove", ["provider": id], as: ProviderDirectory.self)
+            await refresh(force: true)
+            return true
+        } catch {
+            notice = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Asks the endpoint what it serves. The key typed for this goes with the question
+    /// and is not stored (`discoverModels` in providers.js).
+    func discoverModels(baseURL: String, api: String, key: String) async -> [DiscoveredModel] {
+        var payload: [String: Any] = ["baseURL": baseURL.trimmingCharacters(in: .whitespacesAndNewlines)]
+        if !api.isEmpty { payload["api"] = api }
+        let secret = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !secret.isEmpty { payload["key"] = secret }
+        do {
+            let found = try await client.call("provider-models", payload, as: [DiscoveredModel].self)
+            return found
+        } catch {
+            notice = error.localizedDescription
+            return []
         }
     }
 

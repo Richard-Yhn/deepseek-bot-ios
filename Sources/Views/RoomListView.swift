@@ -9,6 +9,8 @@ import SwiftUI
 struct RoomListView: View {
     @EnvironmentObject private var model: TeamModel
 
+    @State private var showNewRoom = false
+
     private var theme: DSBTheme { model.theme }
     private var rooms: [Room] { model.team.roomList }
     private var approvals: [Approval] { model.team.approvalList }
@@ -44,8 +46,12 @@ struct RoomListView: View {
                 footer
             }
         }
-        .refreshable { await model.refresh() }
+        .refreshable { await model.refresh(force: true) }
         .background(theme.bgBase)
+        .sheet(isPresented: $showNewRoom) {
+            CreateRoomView()
+                .environmentObject(model)
+        }
     }
 
     private var header: some View {
@@ -70,6 +76,17 @@ struct RoomListView: View {
                 .font(.body.monospaced().weight(.semibold))
                 .foregroundStyle(theme.textPrimary)
             Spacer()
+            Button {
+                showNewRoom = true
+            } label: {
+                Text("新建")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(theme.bgTerminal)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(theme.accentAssistant)
+            }
+            .buttonStyle(.plain)
             Button {
                 model.screen = .web
             } label: {

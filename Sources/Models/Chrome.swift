@@ -9,6 +9,9 @@ enum AppScreen: Equatable {
     case team
     case chat
     case rooms
+    case dispatch
+    case providers
+    case direct
     case settings
     case web
 }

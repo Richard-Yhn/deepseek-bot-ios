@@ -92,6 +92,86 @@ const OUTCOMES = { allow: 'allowed-once', reject: 'rejected' }
 
 `time` 是事件时间，宿主写 epoch 毫秒，本 App 也接受秒和 ISO 8601。
 
+## 管理与派活
+
+| endpoint | 载荷 | 说明 |
+|---|---|---|
+| `create-bot` | `{ name, role?, color?, brief?, instructions?, model?, effort?, workDir?, pickModel? }` | `name` ≤40 且唯一；`role` ≤24；`color` 是**名字**不是 hex；`pickModel: true` 表示先建、模型后选 |
+| `update-bot` | `{ id, name?, role?, color?, brief?, instructions?, model?, effort?, workDir? }` | `model: null` / `effort: null` 是**清空**，不是"不改" |
+| `delete-bot` | `{ id }` | 回新的团队视图 |
+| `set-main` | `{ id, main: true, primary?: bool }` | `primary` 表示替换原来的主 Bot |
+| `create-room` | `{ name, members: [botId…], admin?, greet? }` | `greet: true` 让宿主建完就跑开场轮 |
+| `delete-room` | `{ id }` | |
+| `efforts` | `{ ref }` | 回 `{ efforts: [{id,name,description?}], defaultEffort? }`；没有思考档位时 `{ efforts: [] }` |
+| `folders` | `{}` | 回 `{ team, picker, folders: [{path,title}] }` —— 团队已在用的目录，不是文件浏览器 |
+
+**派活不是端点**，是 N 次 `send`。每个 Bot 是独立的 root Session，宿主并行跑各自的 turn：
+
+```json
+{ "endpoint": "send", "payload": { "sessionId": "<bot 的当前会话>", "text": "同一件事 + 你这一份的重点" } }
+```
+
+## 供应商与自定义模型
+
+| endpoint | 载荷 | 回值 |
+|---|---|---|
+| `providers` | `{}` | `{ available, providers: [{id,name,models,key:{configured,writable}\|null,removable,custom,error?}], addable, protocols }` |
+| `provider-key` | `{ provider, value }`（`value: null` 清除） | 新的供应商视图 |
+| `provider-add` | 见下 | 新的供应商视图 |
+| `provider-models` | `{ baseURL, api?, key? }` 或 `{ provider }` | `[{ id, name?, contextWindow?, maxTokens? }]`，**不存 key** |
+| `provider-remove` | `{ provider }` | 只能删用户自己加的 |
+
+协议只能是 `providers.protocols` 给的那三个：
+`openai-completions` / `openai-responses` / `anthropic-messages`。
+
+接一个自建网关：
+
+```json
+{
+  "endpoint": "provider-add",
+  "payload": {
+    "provider": "my-router",
+    "custom": true,
+    "name": "我的中转",
+    "api": "openai-completions",
+    "baseURL": "https://api.example.com/v1",
+    "models": [{ "id": "llama-3.1-70b" }],
+    "key": "sk-…"
+  }
+}
+```
+
+之后这个供应商的模型就在 `state.models` 里，ref 是 `my-router/llama-3.1-70b`，任何 Bot 都能选。`provider` 的 id 规则是 `^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`。
+
+密钥只写不读：`key.configured` 是宿主愿意说的全部，`describe()` 从此只会回答"有没有配"。
+
+## 增量同步
+
+`state` 带 `since` 时，宿主在没变化的情况下走短路：
+
+```js
+if (body.since === state.revision && …) return ok({ revision, unchanged: true, ...live() })
+```
+
+也就是回一个**没有 `bots` / `rooms`** 的应答，只有 `live()`。所以客户端必须：
+
+- `unchanged === true` → 只合并 `work` / `questions` / `views`，团队本体保持原样
+- 否则整份替换，并记下新的 `revision`
+
+App 按这个规则做（`TeamModel.refresh`），并把节奏调到 1.2 / 1.5 / 4 秒三档。
+
+## 直连模型（不走宿主）
+
+「直连模型」页完全绕开 `/api/bot`，直接对任意 OpenAI 兼容端点做流式请求：
+
+```
+POST <baseURL>/chat/completions
+Authorization: Bearer <key>
+{ "model": "…", "messages": [{ "role": "user", "content": "…" }], "stream": true }
+```
+
+解析 `data:` 行直到 `[DONE]`，取 `choices[0].delta.content` 逐字追加。这条路上的 key 只存在手机里。
+
 ## 容错约定
 
 宿主每次发版都可能加字段，所以 `Sources/Models/Values.swift` 里：

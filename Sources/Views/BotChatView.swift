@@ -8,6 +8,8 @@ import SwiftUI
 struct BotChatView: View {
     @EnvironmentObject private var model: TeamModel
 
+    @State private var manage: ManageTarget?
+
     private var theme: DSBTheme { model.theme }
     private var bot: Bot? { model.selectedBot }
 
@@ -66,6 +68,10 @@ struct BotChatView: View {
             }
         }
         .background(theme.bgBase)
+        .sheet(item: $manage) { target in
+            ManageBotView(bot: target.bot)
+                .environmentObject(model)
+        }
     }
 
     private var header: some View {
@@ -102,6 +108,16 @@ struct BotChatView: View {
                     .font(.body.monospaced())
                     .foregroundStyle(theme.accentAssistant)
             }
+            Button {
+                manage = ManageTarget(bot: bot)
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.caption)
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(7)
+                    .overlay(Rectangle().stroke(theme.promptBorder, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
