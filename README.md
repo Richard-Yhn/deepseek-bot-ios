@@ -1,8 +1,13 @@
 # DeepSeek Bot for iOS
 
+[![ios](https://github.com/Richard-Yhn/deepseek-bot-ios/actions/workflows/ios.yml/badge.svg)](https://github.com/Richard-Yhn/deepseek-bot-ios/actions/workflows/ios.yml)
+
 把 **DeepSeek-Bot** 的团队搬到 iPhone 上。底层是 DeepSeek Harness（dsh），协议和数据结构照搬 [Fei2411/DeepSeek-Bot](https://github.com/Fei2411/DeepSeek-Bot)，客户端骨架取自 [Pedroshakoor/grok-build-ios](https://github.com/Pedroshakoor/grok-build-ios)。
 
 **手机既是遥控器，也是一份算力。** 它盯着桌面端的团队实时同步、能管理团队；也能绕开宿主，直接接任意 OpenAI 兼容接口自己算。
+
+> 构建状态：CI 已跑通（2026-10-22）。产物 `DeepSeekBot-unsigned.ipa` 825 KB，
+> `io.github.richard-yhn.deepseekbot` 0.2.0 (1)，iOS 17.0+，arm64 未签名。
 
 ---
 

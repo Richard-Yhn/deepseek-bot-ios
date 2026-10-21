@@ -90,3 +90,44 @@ git push fork feat/room-log
 
 然后浏览器打开 `https://github.com/Fei2411/DeepSeek-Bot/compare/dev...Richard-Yhn:feat/room-log?expand=1`，
 标题用上面那句，正文把 `docs/upstream-pr-body.md` 的内容粘进去，点 **Create pull request**。
+
+---
+
+## 实际结果（2026-10-22 01:10）
+
+| 步骤 | 结果 | 链接 |
+|---|---|---|
+| 建 iOS 仓 + 推 main | ✅ | https://github.com/Richard-Yhn/deepseek-bot-ios |
+| iOS CI 首次编译 | ✅ 通过（第 2 次运行） | https://github.com/Richard-Yhn/deepseek-bot-ios/actions/runs/39640765164 |
+| 产物 | ✅ `DeepSeekBot-unsigned.ipa` 825 KB | 同上，页面底部 Artifacts |
+| fork 上游 | ✅ | https://github.com/Richard-Yhn/DeepSeek-Bot |
+| 推 `feat/room-log` | ✅ | https://github.com/Richard-Yhn/DeepSeek-Bot/tree/feat/room-log |
+| 对上游开 PR | ❌ API 返回 404 | 需网页点一下（见下） |
+
+### 第一次 CI 失败的原因
+
+```
+Sources/Models/Provider.swift:126:8: error: type 'FolderOption' does not conform to protocol 'Identifiable'
+```
+
+`FolderOption` 只写了 `uid` 没写 `id`。改成 `id` 后第 2 次运行全绿：
+XcodeGen 生成工程 → 模拟器单测 → 编译设备包 → 打成 IPA → 上传 artifact。
+
+### 为什么 PR 那步 404
+
+- token 的 scope 是 `repo, workflow`，没问题
+- 同样的 `POST /pulls` 在**你自己的 fork 里**能成功（当时建了测试 PR #1 又关掉了）
+- `compare/main...Richard-Yhn:feat/room-log` 也能正常解析（ahead 1 / 3 个文件）
+
+所以缺的不是代码或分支，而是"对别人的仓库开 PR"这一步的账号权限。GitHub 在账号受限时
+只会回一个含糊的 404，网页才会说真实原因（最常见：邮箱未验证）。
+
+**点这个链接就能开**（页面若拒绝，会写明原因）：
+
+https://github.com/Fei2411/DeepSeek-Bot/compare/main...Richard-Yhn:feat/room-log?expand=1
+
+### base 为什么是 main 而不是 dev
+
+`compare` 显示：对 `dev` 是 **ahead 8**，对 `main` 是 **ahead 1**。也就是说上游 `dev`
+比 `main` 旧 7 个提交，对着 `dev` 开 PR 会把这 7 个无关提交一起带进 diff。
+所以 PR 指向 `main`，正文里也写明了这一点，维护者想改回 `dev` 一键 retarget 即可。

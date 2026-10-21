@@ -3,6 +3,11 @@ name: ios
 on:
   push:
     branches: [main, master]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'patches/**'
+      - 'scripts/**'
   pull_request:
   workflow_dispatch:
   release:
