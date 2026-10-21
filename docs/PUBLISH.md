@@ -113,18 +113,34 @@ Sources/Models/Provider.swift:126:8: error: type 'FolderOption' does not conform
 `FolderOption` 只写了 `uid` 没写 `id`。改成 `id` 后第 2 次运行全绿：
 XcodeGen 生成工程 → 模拟器单测 → 编译设备包 → 打成 IPA → 上传 artifact。
 
-### 为什么 PR 那步 404
+### 为什么 PR 那步 404（已确认，不是我们这边的问题）
 
-- token 的 scope 是 `repo, workflow`，没问题
-- 同样的 `POST /pulls` 在**你自己的 fork 里**能成功（当时建了测试 PR #1 又关掉了）
-- `compare/main...Richard-Yhn:feat/room-log` 也能正常解析（ahead 1 / 3 个文件）
+网页上的提示和上游 `CONTRIBUTING.md` 第 9 行对上了：
 
-所以缺的不是代码或分支，而是"对别人的仓库开 PR"这一步的账号权限。GitHub 在账号受限时
-只会回一个含糊的 404，网页才会说真实原因（最常见：邮箱未验证）。
+> Collaborators of this repository push branches here and open pull requests into `dev`.
+> **For now, only collaborators can open pull requests.** If you are not a collaborator,
+> please open an issue for a bug or use Discussions for a question or an idea.
 
-**点这个链接就能开**（页面若拒绝，会写明原因）：
+**上游把"开 PR"限成了仅 collaborator**——仓库负责人的设置，外部账号这个门打不开。
+token 的 scope（`repo, workflow`）、分支、fork 关系都是好的：我把同样的 `POST /pulls`
+在你自己 fork 里跑过，**201 成功**。
 
-https://github.com/Fei2411/DeepSeek-Bot/compare/main...Richard-Yhn:feat/room-log?expand=1
+而 `.github/ISSUE_TEMPLATE/config.yml` 里 `blank_issues_enabled: false`，功能建议被明确
+导到 Discussions：
+
+| 类型 | 上游要求的通道 |
+|---|---|
+| bug | issue（`bug.yml` 表单） |
+| 功能 / 想法 | Discussions → `category=ideas` |
+| 代码改动 | PR（**仅 collaborator**） |
+
+所以这个端点该走 **Discussions**。正文我已写好（`docs/upstream-discussion.md`），
+点这个链接，标题和正文粘进去：
+
+https://github.com/Fei2411/DeepSeek-Bot/discussions/new?category=ideas
+
+维护者若回"可以，开个 PR"：让他把你加成 collaborator 或临时放开限制，然后重跑
+`python scripts/publish.py --user Richard-Yhn`，第 5 步就会自动成功。
 
 ### base 为什么是 main 而不是 dev
 

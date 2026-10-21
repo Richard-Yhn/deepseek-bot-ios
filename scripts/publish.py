@@ -211,12 +211,16 @@ def main():
         errors = (body or {}).get("errors", "")
         compare = f"https://github.com/{UPSTREAM}/compare/{base}...{login}:{BRANCH}?expand=1"
         if status == 404:
-            # 分支已经推好了，缺的只是"对别人的仓库开 PR"这一步。GitHub 在账号受限
-            # （邮箱未验证、或该仓库限制了新贡献者）时只会回一个含糊的 404，网页才说原因。
-            warn("API 开 PR 返回 404。分支已在 fork 上，缺的是对上游开 PR 的权限。")
-            print(f"\n用网页点一下就能开（页面会显示真正的原因）：\n  {compare}\n")
-            print("如果网页也拒绝：先确认 github.com/settings/emails 里的邮箱已验证，")
-            print("再看上游仓库的 issue/PR 是否限制了新贡献者；处理完重跑本脚本即可。")
+            # 上游 CONTRIBUTING 写明 "only collaborators can open pull requests"，外部
+            # 账号只会拿到一个含糊的 404。这不是分支或 scope 的问题：同样的 POST 在
+            # 用户自己的 fork 里能 201。
+            fork = f"https://github.com/{login}/{UPSTREAM.split('/')[1]}/tree/{BRANCH}"
+            warn("API 开 PR 返回 404：上游只允许 collaborator 开 PR（见其 CONTRIBUTING）")
+            print(f"\n分支已经在你的 fork 上，谁都能取：\n  {fork}")
+            print(f"\n看一眼改动：\n  {compare}")
+            print("\n按上游的规矩，外部贡献走 Discussions → Ideas，正文见 docs/upstream-discussion.md：")
+            print(f"  https://github.com/{UPSTREAM}/discussions/new?category=ideas")
+            print("\n维护者把你加成 collaborator 或放开限制后，重跑本脚本即可。")
             raise SystemExit(2)
         raise SystemExit(f"开 PR 失败（HTTP {status}）：{message} {errors}")
     ok(f"PR 已开：{body['html_url']}")

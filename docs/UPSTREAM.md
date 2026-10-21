@@ -74,6 +74,12 @@ node --test  ds-bot/test/room-log.test.js    # 9 pass / 0 fail
 
 ## 怎么把这个 PR 发出去
 
+> ⚠️ **先看这条**：上游 `CONTRIBUTING.md` 写着 *"For now, only collaborators can open pull
+> requests"*。外部账号开 PR 会被拒（网页提示"limited the ability to open a pull request to
+> users that are collaborators"，API 返回一个含糊的 404）。所以下面的 `git am` 流程只适用于
+> 你**已经是 collaborator** 的情况；否则走 Discussions → Ideas，正文见
+> [upstream-discussion.md](upstream-discussion.md)。
+
 补丁在 `patches/room-log.patch`，也可以直接用 `git am`：
 
 ```bash
