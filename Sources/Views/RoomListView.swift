@@ -150,6 +150,10 @@ struct RoomListView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            Task { await model.openRoom(room) }
+        }
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(theme.promptBorder.opacity(0.6))
@@ -158,7 +162,7 @@ struct RoomListView: View {
     }
 
     private var footer: some View {
-        Text("群聊的完整消息流在「完整界面」里，那里是 DSH 自己的 Web 客户端。")
+        Text("点任意群聊可以发消息、看谁正在说、停掉某一轮；完整消息流仍在「完整界面」里。")
             .font(.caption2.monospaced())
             .foregroundStyle(theme.grayDim)
             .padding(.horizontal, 12)

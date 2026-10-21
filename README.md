@@ -125,6 +125,8 @@ cd out && zip -qry DeepSeekBot-unsigned.ipa Payload
 | 工作目录 | `folders` |
 | 派活（多个 Bot 并行） | 多次 `send` |
 | 建 / 删群聊 | `create-room`、`delete-room` |
+| 群聊发消息 | `send`（`sessionId: room.id`，房间就是 Session） |
+| 群聊实时进度 / 停某一轮 | `room-progress`、`stop-member-work` |
 | 群聊工具审批 | `approval-answer` |
 | 供应商与自定义模型 | `providers`、`provider-key`、`provider-add`、`provider-models`、`provider-remove` |
 | 手机直连模型 | 第三方 `/chat/completions`（SSE） |
@@ -185,7 +187,7 @@ docs/PROTOCOL.md             用到的端点与载荷
 ## 已知限制
 
 - **同一 Wi-Fi 才能连宿主**。外网要自己挂反向代理（宿主有 Host 信任围栏和登录 cookie，别裸奔）。想脱离局域网，就用「直连模型」那一路。
-- **群聊只能看不能发**：`send` 要会话 id，房间的成员会话是隐藏的；发消息仍走完整界面。
+- **群聊能发，但看不到完整历史**。发消息是原生支持的——房间本身就是一个 Session，官方客户端就是 `send {sessionId: room.id}`（`client/new-chat.js:75` → `team-actions.js:69`），还能看谁在说、几次调用、停掉某一轮。但历史消息读不到：`view()` 把每个房间的 `log` 解构丢弃只留 `preview`，`chat`/`earlier` 又都要求 `botOf(sessionId)`。桌面端能显示是因为它跑在 DSH 自己的 Web 客户端里、能直接订阅 session 事件。
 - 卡片式提问只提示「在等你回答」，作答仍需完整界面。
 - Bot 浏览器读取（`browser-wait`）是桌面窗口的长轮询，手机不做。
 - token 与直连模型的 key 都存在 App 沙盒的 UserDefaults 里；等于把宿主登录凭据和 API key 放在这台手机上。

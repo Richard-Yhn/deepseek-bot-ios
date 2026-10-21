@@ -34,6 +34,8 @@ struct RootView: View {
             BotChatView()
         case .rooms:
             RoomListView()
+        case .room:
+            RoomDetailView()
         case .dispatch:
             DispatchView()
         case .providers:

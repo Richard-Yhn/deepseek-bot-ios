@@ -172,6 +172,43 @@ Authorization: Bearer <key>
 
 解析 `data:` 行直到 `[DONE]`，取 `choices[0].delta.content` 逐字追加。这条路上的 key 只存在手机里。
 
+## 群聊
+
+**一个房间就是一个 Session，`room.id` 就是那个 Session 的 id。** 所以给群聊发消息用的是
+Bot 会话那条同一个 `send`：
+
+```js
+// ds-bot/src/client/new-chat.js:75
+await actions.send(room.id, text)
+// ds-bot/src/client/team-actions.js:69
+send: (sessionId, text) => after(call('send', { sessionId: partFor(sessionId), text }))
+// index.js:339  partFor(id) = 是 Bot id ? 它当前那一段 : id 原样返回
+```
+
+| endpoint | 载荷 | 回值 |
+|---|---|---|
+| `send` | `{ sessionId: "<room.id>", text }` | `true` |
+| `room-progress` | `{ roomId }` | `[{ callId, replies, speaking }]` |
+| `stop-member-work` | `{ roomId, botId }` | `true` |
+| `approval-answer` | `{ id, choice: "allow" \| "reject" }` | `true` |
+
+**读不到的是历史消息**，这一点在代码里是明确的：
+
+```js
+// channel.js — view()
+rooms: Object.values(state.rooms).map(({ log, seen, lateRounds, sessions, segments, ...room }) => {
+  const last = (log ?? []).filter(line => line.kind === undefined).at(-1)
+  return { ...room, parts, ...(last ? { preview: … } : {}) }   // log 被解构掉了
+})
+// parts.js — chatPage(botId) → partsOf(botId) → rt.botOf(botId)；房间 id 不是 Bot，
+// 直接 throw 'Unknown Bot'。earlierPage 同理。
+```
+
+桌面窗口之所以能显示完整群聊，是因为它作为插件跑在 DSH 自己的 Web 客户端里，可以走
+DSH 的 session 事件流；`/api/bot` 只开放了上面这几个口子。
+
+App 的做法：原生发消息 + 实时进度 + 审批 + 停轮；历史记录交给 `完整界面`。
+
 ## 容错约定
 
 宿主每次发版都可能加字段，所以 `Sources/Models/Values.swift` 里：

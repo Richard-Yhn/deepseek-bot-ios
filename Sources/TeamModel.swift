@@ -141,6 +141,7 @@ final class TeamModel: ObservableObject {
                 guard !Task.isCancelled else { return }
                 await self.refresh()
                 if self.screen == .chat { await self.loadChat(silent: true) }
+                if self.screen == .room { await self.loadRoomProgress() }
             }
         }
     }
@@ -149,7 +150,7 @@ final class TeamModel: ObservableObject {
     /// idle. `since` keeps the idle ticks cheap: an unchanged answer is a few hundred
     /// bytes of `live()` state.
     private var pollInterval: UInt64 {
-        if screen == .chat { return 1_200_000_000 }
+        if screen == .chat || screen == .room { return 1_200_000_000 }
         if team.botList.contains(where: { team.isWorking($0) }) { return 1_500_000_000 }
         return 4_000_000_000
     }
@@ -410,6 +411,85 @@ final class TeamModel: ObservableObject {
             return "发出 \(sent) 个；\(skipped.joined(separator: "、")) 还没有会话，先在完整界面打开一次。"
         }
         return "已派给 \(sent) 个 Bot，它们各自在宿主上并行跑。"
+    }
+
+    // MARK: - Room chats
+    //
+    // A room IS a Session on the host, and its id is that session's id — the official
+    // client sends with `room.id` (client/new-chat.js: `actions.send(room.id, text)`,
+    // which team-actions maps to `call('send', { sessionId, text })`). So the phone can
+    // post into a group chat over the same endpoint a Bot chat uses.
+    //
+    // What it cannot do is read the group's history: `view()` strips each room's `log`
+    // and keeps `preview`, and `chat`/`earlier` only answer for a Bot's own Session.
+    // Live progress is exposed though, so a running room still shows who is speaking.
+
+    @Published var selectedRoomId: String?
+    @Published var roomDraft = ""
+    @Published var roomProgress: [RoomProgress] = []
+    @Published var isRoomSending = false
+
+    var selectedRoom: Room? {
+        guard let id = selectedRoomId else { return nil }
+        return team.roomList.first { $0.id == id }
+    }
+
+    var isRoomRunning: Bool {
+        guard let id = selectedRoomId else { return false }
+        return team.work?.rooms?[id] != nil
+    }
+
+    func openRoom(_ room: Room) async {
+        selectedRoomId = room.id
+        roomDraft = ""
+        roomProgress = []
+        screen = .room
+        await loadRoomProgress()
+    }
+
+    func loadRoomProgress() async {
+        guard let id = selectedRoomId else { return }
+        do {
+            roomProgress = try await client.call("room-progress", ["roomId": id], as: [RoomProgress].self)
+        } catch {
+            roomProgress = []
+        }
+    }
+
+    func sendToRoom() async {
+        let text = roomDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let id = selectedRoomId else { return }
+        guard !team.isReadOnly else {
+            notice = team.readOnly ?? "这个宿主只能读，不能发消息。"
+            return
+        }
+        isRoomSending = true
+        defer { isRoomSending = false }
+        do {
+            try await client.callVoid("send", ["sessionId": id, "text": text])
+            roomDraft = ""
+            await refresh(force: true)
+            await loadRoomProgress()
+        } catch {
+            notice = error.localizedDescription
+        }
+    }
+
+    /// Stops one member's turn inside a room (`stop-member-work { roomId, botId }`).
+    func stopMember(in room: Room, botId: String) async {
+        guard let id = room.id else { return }
+        do {
+            try await client.callVoid("stop-member-work", ["roomId": id, "botId": botId])
+            await refresh(force: true)
+            await loadRoomProgress()
+        } catch {
+            notice = error.localizedDescription
+        }
+    }
+
+    /// Member ids → the Bots they name, in the room's own order.
+    func members(of room: Room) -> [Bot] {
+        (room.members ?? []).compactMap { team.bot($0) }
     }
 
     // MARK: - Models, providers, folders
