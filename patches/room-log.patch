@@ -1,0 +1,233 @@
+From c16c21d6ae483705ece482e0b1e2b8834d9837c8 Mon Sep 17 00:00:00 2001
+From: Richard-Yhn <richard-yhn@users.noreply.github.com>
+Date: Thu, 22 Oct 2026 00:34:32 +0800
+Subject: [PATCH] feat: add a room-log endpoint so a client can read a group
+ chat
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- `room-log { roomId, before?, limit? }` returns one page of room.log, newest
+  page first, cursor by seq. `before` is the seq of the oldest line the caller
+  already holds; `cursor` is null once the log is read to its start or the host
+  has dropped those lines (it keeps ROOM_LOG_KEPT, reported as `kept`).
+- Pure paging lives in src/host/room-log.js and is covered by
+  test/room-log.test.js (9 cases), so the wiring in channel.js stays thin.
+- A cut line keeps its stored head plus `length`, and `file-text` still fetches
+  the whole text.
+- Read-only: added to READS, so a host that only reads the team answers it.
+- Unknown roomId answers bot/not-found instead of throwing.
+
+Why: state carries only the last line of each room as `preview` — view()
+destructures `log` away — so any client that is not this window has no way to
+draw a group chat. The iOS client this was written for falls back to the web
+view without this endpoint.
+---
+ ds-bot/src/host/channel.js   | 12 ++++-
+ ds-bot/src/host/room-log.js  | 51 +++++++++++++++++++
+ ds-bot/test/room-log.test.js | 98 ++++++++++++++++++++++++++++++++++++
+ 3 files changed, 160 insertions(+), 1 deletion(-)
+ create mode 100644 ds-bot/src/host/room-log.js
+ create mode 100644 ds-bot/test/room-log.test.js
+
+diff --git a/ds-bot/src/host/channel.js b/ds-bot/src/host/channel.js
+index d781722..6de832a 100644
+--- a/ds-bot/src/host/channel.js
++++ b/ds-bot/src/host/channel.js
+@@ -4,6 +4,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
+ import { questionReply, viewReply } from './parts.js'
+ import { validateViewAnswer } from '../shared/views.js'
+ import { COLORS, EXTRA_COLORS, ROUTE } from './constants.js'
++import { roomLogPage } from './room-log.js'
+ 
+ const LANGUAGES = { zh: 'Chinese (简体中文)', en: 'English' }
+ const RUN_STATS = ['sessionStats', 'tokenUsage', 'contextPressure']
+@@ -84,7 +85,7 @@ export function install(rt) {
+   })
+   // What a host that only reads the team may still answer.
+   // Updates change the dsh profile, not the team, so a reading host may run them too.
+-  const READS = new Set(['state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking'])
++  const READS = new Set(['state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-log', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking'])
+ 
+   function setPrefs(body) {
+     if (body.theme !== undefined) {
+@@ -192,6 +193,15 @@ export function install(rt) {
+           return ok(await rt.usageView({ timeZone: typeof body.timeZone === 'string' ? body.timeZone.slice(0, 64) : undefined }))
+         case 'room-progress':
+           return ok([...rt.roomProgress.entries()].filter(([, entry]) => entry.roomId === body.roomId).map(([callId, entry]) => ({ callId, replies: entry.replies, speaking: entry.speaking ?? null })))
++        // A room's own transcript, a page at a time. `state` keeps only its last line
++        // (view() strips `log`), so a client that draws the group chat itself has had
++        // nothing to draw from. Read-only: it only reads what members already read.
++        case 'room-log': {
++          await rt.load()
++          const room = rt.roomOf(String(body.roomId ?? ''))
++          if (room === undefined) return fail('Unknown room', 'bot/not-found')
++          return ok(roomLogPage(room, { before: body.before, limit: body.limit }))
++        }
+         case 'create-bot': {
+           await rt.bootstrap()
+           const bot = await rt.createBot({ name: body.name, role: body.role, color: body.color, instructions: body.instructions, brief: body.brief, avatar: body.avatar, model: body.model, effort: body.effort, workDir: body.workDir })
+diff --git a/ds-bot/src/host/room-log.js b/ds-bot/src/host/room-log.js
+new file mode 100644
+index 0000000..81dafc5
+--- /dev/null
++++ b/ds-bot/src/host/room-log.js
+@@ -0,0 +1,51 @@
++// One page of a room's kept lines, for a client that draws the group chat itself.
++//
++// `state` carries only the last line of each room as `preview` — channel.js strips
++// `log` out of every room — so a window that is not this one has had no way to read
++// back what a room said. The lines here are the same ones the members read: newest
++// last, at most ROOM_LOG_KEPT of them, a long one marked `length` with its whole text
++// kept beside the state file (`file-text` still fetches that).
++
++export const ROOM_LOG_KEPT = 60
++export const ROOM_LOG_DEFAULT = 20
++
++const LIMIT_MIN = 1
++const LIMIT_MAX = ROOM_LOG_KEPT
++
++// A line the way `state.rooms[].log` holds it, minus the host's own bookkeeping:
++// `length` only when the text was cut, `files` only when the post carried any.
++const wireLine = (line) => ({
++  seq: line.seq,
++  who: String(line.who ?? ''),
++  ...(line.botId === undefined ? {} : { botId: line.botId }),
++  ...(line.kind === undefined ? {} : { kind: line.kind }),
++  ...(line.length === undefined ? {} : { length: line.length }),
++  ...(Array.isArray(line.files) && line.files.length > 0 ? { files: line.files } : {}),
++  text: typeof line.text === 'string' ? line.text : '',
++})
++
++const clamp = (value) => {
++  const number = Number(value)
++  if (!Number.isFinite(number)) return ROOM_LOG_DEFAULT
++  return Math.min(Math.max(Math.trunc(number), LIMIT_MIN), LIMIT_MAX)
++}
++
++// `before` is the seq of the oldest line the caller already holds; the page that comes
++// back is the newest `limit` lines older than it. `cursor` is null once nothing older is
++// left — either the log was read to its start, or the host has dropped those lines (it
++// keeps ROOM_LOG_KEPT, which `kept` reports).
++export const roomLogPage = (room, cursor = {}) => {
++  const log = Array.isArray(room?.log) ? room.log : []
++  const limit = clamp(cursor?.limit)
++  const before = Number.isInteger(cursor?.before) ? cursor.before : undefined
++  const older = before === undefined ? log : log.filter(line => line.seq < before)
++  const page = older.slice(-limit)
++  const more = older.length > page.length
++  return {
++    seq: typeof room?.seq === 'number' ? room.seq : 0,
++    kept: log.length,
++    limit,
++    lines: page.map(wireLine),
++    cursor: more && page.length > 0 ? { before: page[0].seq } : null,
++  }
++}
+diff --git a/ds-bot/test/room-log.test.js b/ds-bot/test/room-log.test.js
+new file mode 100644
+index 0000000..55d096d
+--- /dev/null
++++ b/ds-bot/test/room-log.test.js
+@@ -0,0 +1,98 @@
++import { test } from 'node:test'
++import assert from 'node:assert/strict'
++import { ROOM_LOG_DEFAULT, ROOM_LOG_KEPT, roomLogPage } from '../src/host/room-log.js'
++
++const room = (count, extra = {}) => ({
++  seq: count,
++  log: Array.from({ length: count }, (_, index) => ({
++    seq: index + 1,
++    who: index % 2 === 0 ? 'User' : 'Bot',
++    text: `line ${index + 1}`,
++  })),
++  ...extra,
++})
++
++test('the newest page comes back when no cursor is given', () => {
++  const page = roomLogPage(room(30))
++  assert.equal(page.lines.length, ROOM_LOG_DEFAULT)
++  assert.equal(page.lines[0].text, 'line 11')
++  assert.equal(page.lines.at(-1).text, 'line 30')
++  assert.deepEqual(page.cursor, { before: 11 })
++})
++
++test('a whole log shorter than a page has no cursor', () => {
++  const page = roomLogPage(room(5))
++  assert.equal(page.lines.length, 5)
++  assert.equal(page.cursor, null)
++  assert.equal(page.kept, 5)
++  assert.equal(page.seq, 5)
++})
++
++test('paging back by seq walks to the start and stops', () => {
++  const first = roomLogPage(room(5), { limit: 2 })
++  assert.deepEqual(first.lines.map(line => line.text), ['line 4', 'line 5'])
++  assert.deepEqual(first.cursor, { before: 4 })
++
++  const second = roomLogPage(room(5), { limit: 2, before: first.cursor.before })
++  assert.deepEqual(second.lines.map(line => line.text), ['line 2', 'line 3'])
++  assert.deepEqual(second.cursor, { before: 2 })
++
++  const third = roomLogPage(room(5), { limit: 2, before: second.cursor.before })
++  assert.deepEqual(third.lines.map(line => line.text), ['line 1'])
++  assert.equal(third.cursor, null)
++})
++
++test('the limit is clamped to what a host keeps', () => {
++  assert.equal(roomLogPage(room(30), { limit: 999 }).lines.length, 30)
++  assert.equal(roomLogPage(room(30), { limit: 0 }).limit, 1)
++  assert.equal(roomLogPage(room(30), { limit: -5 }).lines.length, 1)
++  assert.equal(roomLogPage(room(30), { limit: 'big' }).limit, ROOM_LOG_DEFAULT)
++  assert.equal(roomLogPage(room(ROOM_LOG_KEPT), { limit: 999 }).lines.length, ROOM_LOG_KEPT)
++})
++
++test('a cut line keeps its length and the head it was stored with', () => {
++  const page = roomLogPage({
++    seq: 1,
++    log: [{ seq: 1, who: 'Bot', text: 'head…', length: 9000 }],
++  })
++  const line = page.lines[0]
++  assert.equal(line.text, 'head…')
++  assert.equal(line.length, 9000)
++})
++
++test('a line carries only the fields it has', () => {
++  const page = roomLogPage({
++    seq: 2,
++    log: [
++      { seq: 1, who: 'User', text: 'plain' },
++      { seq: 2, who: 'Lookup', botId: 'bot-1', kind: 'lookup', text: '', files: [{ name: 'a.png' }] },
++      { seq: 3, who: 'Files', botId: 'bot-2', text: 'two', files: [] },
++    ],
++  })
++  const [plain, lookup, emptyFiles] = page.lines
++  assert.deepEqual(Object.keys(plain), ['seq', 'who', 'text'])
++  assert.equal(lookup.kind, 'lookup')
++  assert.equal(lookup.botId, 'bot-1')
++  assert.deepEqual(lookup.files, [{ name: 'a.png' }])
++  assert.equal(emptyFiles.files, undefined)
++})
++
++test('a room with no log answers with an empty page', () => {
++  const page = roomLogPage({ seq: 0 })
++  assert.deepEqual(page.lines, [])
++  assert.equal(page.cursor, null)
++  assert.equal(page.kept, 0)
++  assert.equal(page.limit, ROOM_LOG_DEFAULT)
++})
++
++test('an unknown room does not throw', () => {
++  const page = roomLogPage(undefined)
++  assert.deepEqual(page.lines, [])
++  assert.equal(page.seq, 0)
++})
++
++test('a cursor past the newest line still answers the newest page', () => {
++  const page = roomLogPage(room(10), { before: 999 })
++  assert.equal(page.lines.at(-1).text, 'line 10')
++  assert.equal(page.cursor, null)
++})
+-- 
+2.55.0.windows.3
+

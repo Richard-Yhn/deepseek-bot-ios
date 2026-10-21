@@ -102,7 +102,19 @@ mkdir -p out/Payload && cp -R build/Build/Products/Release-iphoneos/DeepSeekBot.
 cd out && zip -qry DeepSeekBot-unsigned.ipa Payload
 ```
 
-### 5. 装到 iPhone
+### 5. 桌面端（Windows / macOS）
+
+桌面端不是这个仓库的代码，是上游的 Electron 壳。`.github/workflows/desktop.yml` 手动触发后：克隆上游 → 应用 `patches/room-log.patch` → 用上游自己的 `electron-builder.yml` 打包，产出 `.exe` / `.zip`。这样打出来的包和上游发布的一致，只是多了 `room-log`。
+
+```
+Actions → desktop → Run workflow
+  ref:         main
+  apply_patch: true
+```
+
+**标为实验**：没在真机上跑过，`npm ci` 与 electron-builder 的下载都依赖当时的 npm 源。
+
+### 6. 装到 iPhone
 
 | 方式 | 需要 | 有效期 |
 |---|---|---|
@@ -171,13 +183,16 @@ Sources/
     DispatchView.swift       派活：一件事，多个 Bot 各领一份
     CreateRoomView.swift     建群
     RoomListView.swift       群聊列表 + 审批
+    RoomDetailView.swift     单群：记录（有补丁时）/ 发消息 / 谁在说 / 停轮
     ProvidersView.swift      供应商 · 自定义模型 · 密钥 · 发现模型
     DirectChatView.swift     手机直连模型 + 交给团队
     SettingsView.swift       连接、外观、上游
     WebHostView.swift        完整界面
   Ported/                    取自 grok-build-ios 的文件（见 NOTICE）
 Tests/DSBCoreTests.swift     地址解析、容错解码、消息行身份
+patches/room-log.patch       给宿主加的 room-log 端点（含 9 个单测）
 docs/PROTOCOL.md             用到的端点与载荷
+docs/UPSTREAM.md             与上游的关系、补丁内容、怎么开 PR
 ```
 
 ## CI
@@ -187,7 +202,7 @@ docs/PROTOCOL.md             用到的端点与载荷
 ## 已知限制
 
 - **同一 Wi-Fi 才能连宿主**。外网要自己挂反向代理（宿主有 Host 信任围栏和登录 cookie，别裸奔）。想脱离局域网，就用「直连模型」那一路。
-- **群聊能发，但看不到完整历史**。发消息是原生支持的——房间本身就是一个 Session，官方客户端就是 `send {sessionId: room.id}`（`client/new-chat.js:75` → `team-actions.js:69`），还能看谁在说、几次调用、停掉某一轮。但历史消息读不到：`view()` 把每个房间的 `log` 解构丢弃只留 `preview`，`chat`/`earlier` 又都要求 `botOf(sessionId)`。桌面端能显示是因为它跑在 DSH 自己的 Web 客户端里、能直接订阅 session 事件。
+- **群聊记录要靠一个上游补丁**。发消息、实时进度、停轮、审批都是原生的；完整记录需要宿主带 `room-log` 端点——这就是 `patches/room-log.patch` 干的事（新端点 + 9 个单测，纯加法）。宿主没打补丁时，这一页退回到"最后一句 + 说明"，其余功能不受影响；打上之后同一个页面自动变成完整群聊，**App 不用改**。详见 [docs/UPSTREAM.md](docs/UPSTREAM.md)。
 - 卡片式提问只提示「在等你回答」，作答仍需完整界面。
 - Bot 浏览器读取（`browser-wait`）是桌面窗口的长轮询，手机不做。
 - token 与直连模型的 key 都存在 App 沙盒的 UserDefaults 里；等于把宿主登录凭据和 API key 放在这台手机上。

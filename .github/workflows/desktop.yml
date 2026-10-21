@@ -1,0 +1,95 @@
+# 桌面端打包（Windows / macOS）
+#
+# 桌面端是上游 Fei2411/DeepSeek-Bot 的 Electron 壳，不是这个仓库的代码。这个 workflow
+# 做的是：克隆上游 → 应用 patches/room-log.patch → 用上游自己的 electron-builder 配置
+# 打包。所以打出来的 exe / zip 与上游发布的一致，只是多了 room-log 端点。
+#
+# 手动触发（Actions → desktop → Run workflow）。没在真机上验证过，先当实验用。
+
+name: desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "上游 ref（分支 / tag / commit）"
+        required: false
+        default: main
+      apply_patch:
+        description: "应用 patches/room-log.patch"
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows (x64)
+            artifacts: |
+              upstream/app/dist/**/*.exe
+              upstream/app/dist/**/*.blockmap
+              upstream/app/dist/**/latest.yml
+          - os: macos-15
+            label: macOS (arm64)
+            artifacts: |
+              upstream/app/dist/**/*.zip
+              upstream/app/dist/**/*.dmg
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Clone upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/Fei2411/DeepSeek-Bot.git upstream
+          cd upstream
+          git checkout "${{ github.event.inputs.ref }}"
+          git log --oneline -1
+
+      - name: Apply room-log patch
+        if: ${{ github.event.inputs.apply_patch == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd upstream
+          git apply --3way "$GITHUB_WORKSPACE/patches/room-log.patch"
+          git --no-pager diff --stat
+
+      - name: Install app dependencies
+        shell: bash
+        working-directory: upstream/app
+        run: npm ci --no-audit --no-fund
+
+      - name: Package
+        shell: bash
+        working-directory: upstream/app
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run dist
+
+      - name: List output
+        shell: bash
+        run: |
+          find upstream/app -maxdepth 3 -type d -name 'dist*' -print
+          find upstream/app -maxdepth 4 -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.dmg' \) -print -exec ls -lh {} \;
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}
+          path: ${{ matrix.artifacts }}
+          if-no-files-found: warn
+          retention-days: 14

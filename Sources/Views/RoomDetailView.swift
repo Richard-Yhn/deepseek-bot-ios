@@ -28,10 +28,9 @@ struct RoomDetailView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if let room {
                         liveStrip(room)
+                        transcript(room)
                         memberList(room)
                         approvals
-                        lastLine(room)
-                        explainer
                     } else {
                         Text("这个群聊已经不在了。")
                             .font(.caption.monospaced())
@@ -225,6 +224,115 @@ struct RoomDetailView: View {
         }
     }
 
+    // MARK: - Transcript
+
+    /// With the `room-log` patch the transcript is here; without it, the last line plus
+    /// a straight explanation of what the channel does and does not carry.
+    @ViewBuilder
+    private func transcript(_ room: Room) -> some View {
+        if model.roomLogSupported {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 8) {
+                    Text("群聊记录")
+                        .font(.caption2.monospaced().weight(.semibold))
+                        .foregroundStyle(theme.gray)
+                    Spacer()
+                    if model.roomCursor != nil {
+                        Button {
+                            Task { await model.loadOlderRoomLines() }
+                        } label: {
+                            Text(model.isLoadingRoomLog ? "正在翻…" : "更早的消息")
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(theme.accentAssistant)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(model.isLoadingRoomLog)
+                    }
+                }
+                .padding(.bottom, 6)
+
+                if model.roomLines.isEmpty {
+                    Text("这个群还没有说过话。")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(theme.gray)
+                        .padding(.vertical, 10)
+                } else {
+                    ForEach(model.roomLines) { line in
+                        lineRow(line)
+                    }
+                }
+                if model.roomLines.count >= 60 {
+                    Text("宿主只留最近 60 条，更早的在完整界面里也看不到了。")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(theme.grayDim)
+                        .padding(.top, 8)
+                }
+            }
+            .padding(10)
+            .background(theme.bgTerminal)
+            .overlay(Rectangle().stroke(theme.promptBorder, lineWidth: 1))
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                lastLine(room)
+                explainer
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func lineRow(_ line: RoomLine) -> some View {
+        if line.isMarker {
+            HStack {
+                Spacer(minLength: 0)
+                Text(line.markerText)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(theme.grayDim)
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 5)
+        } else if line.isUser {
+            HStack(alignment: .top, spacing: 0) {
+                Spacer(minLength: 24)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("你")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(theme.accentUser)
+                    Text(line.text ?? "")
+                        .font(.body.monospaced())
+                        .foregroundStyle(theme.textPrimary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(9)
+                .background(theme.bgHighlight)
+            }
+            .padding(.vertical, 3)
+        } else {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(BotInk.color(model.team.bot(line.botId)?.color))
+                        .frame(width: 6, height: 6)
+                    Text(line.displayName)
+                        .font(.caption2.monospaced().weight(.semibold))
+                        .foregroundStyle(theme.accentAssistant)
+                    if line.wasCut {
+                        Text("截断显示 · \(line.length ?? 0) 字")
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(theme.accentPlan)
+                    }
+                }
+                Text(MarkdownLite.attributed(line.text ?? ""))
+                    .font(.body)
+                    .foregroundStyle(theme.textPrimary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 5)
+        }
+    }
+
     private func lastLine(_ room: Room) -> some View {
         Group {
             if let preview = room.preview, !preview.isEmpty {
@@ -247,9 +355,10 @@ struct RoomDetailView: View {
 
     private var explainer: some View {
         Text("""
-        群聊的完整消息流不在这条客户端通道上：宿主把每个房间的 log 从 state 里摘掉了\
-        （只留最后一句），chat / earlier 也只认 Bot 自己的会话。这里保留的是能拿到的\
-        全部——发消息、谁在说、几次调用、待确认的工具审批。看完整记录点右上角。
+        这个宿主还没有 room-log 端点，所以只拿得到最后一句：state 里每个房间的 log 被 \
+        view() 摘掉了，chat / earlier 也只认 Bot 自己的会话。本仓库的 \
+        patches/room-log.patch 就是给宿主补这个端点的（新端点 + 9 个单测）；打上之后这一页\
+        会自己变成完整群聊记录，不需要改 App。
         """)
         .font(.caption2.monospaced())
         .foregroundStyle(theme.grayDim)

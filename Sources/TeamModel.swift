@@ -141,7 +141,10 @@ final class TeamModel: ObservableObject {
                 guard !Task.isCancelled else { return }
                 await self.refresh()
                 if self.screen == .chat { await self.loadChat(silent: true) }
-                if self.screen == .room { await self.loadRoomProgress() }
+                if self.screen == .room {
+                    await self.loadRoomProgress()
+                    await self.loadRoomLog()
+                }
             }
         }
     }
@@ -429,6 +432,15 @@ final class TeamModel: ObservableObject {
     @Published var roomProgress: [RoomProgress] = []
     @Published var isRoomSending = false
 
+    /// The room's own transcript, when the host carries the `room-log` patch
+    /// (`patches/room-log.patch`). `roomLogSupported` stays true for an unpatched host
+    /// until one call answers `Unknown endpoint room-log`.
+    @Published var roomLines: [RoomLine] = []
+    @Published var roomCursor: Int?
+    @Published var roomLogSupported = true
+    @Published var isLoadingRoomLog = false
+    private(set) var roomKept: Int = 0
+
     var selectedRoom: Room? {
         guard let id = selectedRoomId else { return nil }
         return team.roomList.first { $0.id == id }
@@ -443,8 +455,54 @@ final class TeamModel: ObservableObject {
         selectedRoomId = room.id
         roomDraft = ""
         roomProgress = []
+        roomLines = []
+        roomCursor = nil
         screen = .room
         await loadRoomProgress()
+        await loadRoomLog()
+    }
+
+    /// The newest page, merged in. Polling calls this, so new lines arrive without
+    /// throwing away the older pages the user already paged back to.
+    func loadRoomLog() async {
+        guard let id = selectedRoomId else { return }
+        do {
+            let page: RoomLogPage = try await client.call(
+                "room-log", ["roomId": id, "limit": 20], as: RoomLogPage.self
+            )
+            mergeRoomLog(page)
+            roomLogSupported = true
+            if roomCursor == nil { roomCursor = page.cursor?.before }
+        } catch {
+            // An unpatched host is a state, not a failure: the room screen says so.
+            if error.localizedDescription.contains("Unknown endpoint") {
+                roomLogSupported = false
+            }
+        }
+    }
+
+    /// The page older than what we hold, prepended.
+    func loadOlderRoomLines() async {
+        guard let id = selectedRoomId, let before = roomCursor, !isLoadingRoomLog else { return }
+        isLoadingRoomLog = true
+        defer { isLoadingRoomLog = false }
+        do {
+            let page: RoomLogPage = try await client.call(
+                "room-log", ["roomId": id, "limit": 20, "before": before], as: RoomLogPage.self
+            )
+            mergeRoomLog(page)
+            roomCursor = page.cursor?.before
+        } catch {
+            notice = error.localizedDescription
+        }
+    }
+
+    private func mergeRoomLog(_ page: RoomLogPage) {
+        var bySeq: [Int: RoomLine] = [:]
+        for line in roomLines where line.seq != nil { bySeq[line.seq ?? 0] = line }
+        for line in page.list where line.seq != nil { bySeq[line.seq ?? 0] = line }
+        roomLines = bySeq.values.sorted { ($0.seq ?? 0) < ($1.seq ?? 0) }
+        if let kept = page.kept { roomKept = kept }
     }
 
     func loadRoomProgress() async {
@@ -470,6 +528,7 @@ final class TeamModel: ObservableObject {
             roomDraft = ""
             await refresh(force: true)
             await loadRoomProgress()
+            await loadRoomLog()
         } catch {
             notice = error.localizedDescription
         }

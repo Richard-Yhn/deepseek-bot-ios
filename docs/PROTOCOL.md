@@ -191,6 +191,22 @@ send: (sessionId, text) => after(call('send', { sessionId: partFor(sessionId), t
 | `room-progress` | `{ roomId }` | `[{ callId, replies, speaking }]` |
 | `stop-member-work` | `{ roomId, botId }` | `true` |
 | `approval-answer` | `{ id, choice: "allow" \| "reject" }` | `true` |
+| `room-log` ⚠️ | `{ roomId, before?, limit? }` | `{ seq, kept, limit, lines[], cursor }` |
+
+⚠️ `room-log` **不是上游现成的端点**，是 `patches/room-log.patch` 加的（见
+[docs/UPSTREAM.md](UPSTREAM.md)）。宿主没打补丁时返回 `Unknown endpoint room-log`，
+App 据此退回"最后一句 + 说明"。
+
+```json
+{ "endpoint": "room-log", "payload": { "roomId": "…", "before": 41, "limit": 20 } }
+→ { "ok": true, "value": {
+      "seq": 58, "kept": 60, "limit": 20,
+      "lines": [{ "seq": 42, "who": "阿鲸", "botId": "…", "text": "…" }],
+      "cursor": { "before": 42 } } }
+```
+
+`before` 是已持有的最旧一条的 `seq`；`cursor: null` 表示到头或已被宿主丢弃（只留 60 条）。
+`length` 只在文本被截断时出现，全文用 `file-text` 取。
 
 **读不到的是历史消息**，这一点在代码里是明确的：
 
